@@ -30,8 +30,8 @@ fn main() {
         .build()
         .unwrap();
 
-    //let nonce = Nonce::Value(vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef]);
-    let nonce = Nonce::Size(0);
+    let nonce = Nonce::Value(vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef]);
+    // alternatively, to let Veraison pick the challenge: "let nonce = Nonce::Size(32);"
 
     match cr.run(nonce) {
         Err(e) => println!("Error: {}", e),

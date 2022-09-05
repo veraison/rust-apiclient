@@ -13,6 +13,14 @@ pub enum Error {
     NotImplementedError(String),
 }
 
+// While for other error sources the mapping may be more subtle, all reqwest
+// errors are bottled as ApiErrors.
+impl From<reqwest::Error> for Error {
+    fn from(re: reqwest::Error) -> Self {
+        Error::ApiError(re.to_string())
+    }
+}
+
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -93,7 +101,7 @@ impl ChallengeResponseBuilder {
 }
 
 /// The object on which one or more challenge-response verification sessions can
-/// be run.  Always use the ChallengeResponseBuilder to instantiate it.
+/// be run.  Always use the [ChallengeResponseBuilder] to instantiate it.
 pub struct ChallengeResponse {
     base_url: url::Url,
     http_client: reqwest::blocking::Client,
@@ -114,7 +122,6 @@ impl ChallengeResponse {
     /// failure.
     pub fn run(&self, nonce: Nonce) -> Result<String, Error> {
         // create new c/r verification session on the veraison side
-        //let (session_url, session) = self.new_session_with_nonce(nonce)?;
         let (session_url, session) = self.new_session(&nonce)?;
 
         // invoke the user-provided evidence builder callback with per-session parameters
@@ -130,9 +137,7 @@ impl ChallengeResponse {
 
     fn new_session(&self, nonce: &Nonce) -> Result<(String, ChallengeResponseSession), Error> {
         // ask veraison for a new session object
-        let resp = self
-            .new_session_request(nonce)
-            .map_err(|e| Error::ApiError(e.to_string()))?;
+        let resp = self.new_session_request(nonce)?;
 
         // expect 201 and a Location header containing the URI of the newly
         // allocated session
@@ -146,7 +151,7 @@ impl ChallengeResponse {
                 // middleware that is unaware of the API.  We need something
                 // more robust here that dispatches based on the Content-Type
                 // header.
-                let pd: ProblemDetails = resp.json().map_err(|e| Error::ApiError(e.to_string()))?;
+                let pd: ProblemDetails = resp.json()?;
 
                 return Err(Error::ApiError(format!(
                     "newSession response has unexpected status: {}.  Details: {}",
@@ -172,21 +177,21 @@ impl ChallengeResponse {
             .map_err(|e| Error::ApiError(e.to_string()))?;
 
         // decode returned session object
-        let crs: ChallengeResponseSession =
-            resp.json().map_err(|e| Error::ApiError(e.to_string()))?;
+        let crs: ChallengeResponseSession = resp.json()?;
 
         Ok((session_url.to_string(), crs))
     }
 
     fn new_session_request(&self, nonce: &Nonce) -> Result<reqwest::blocking::Response, Error> {
-        let c = &self.http_client;
         let u = self.new_session_request_url(nonce)?;
 
-        return c
+        let r = self
+            .http_client
             .post(u.as_str())
             .header(reqwest::header::ACCEPT, CRS_MEDIA_TYPE)
-            .send()
-            .map_err(|e| Error::ApiError(e.to_string()));
+            .send()?;
+
+        return Ok(r);
     }
 
     fn new_session_request_url(&self, nonce: &Nonce) -> Result<url::Url, Error> {
@@ -199,18 +204,15 @@ impl ChallengeResponse {
         let mut q_params = String::new();
 
         match nonce {
-            Nonce::Value(val) => {
-                if val.len() > 0 {
-                    q_params.push_str("nonce=");
-                    q_params.push_str(&base64::encode_config(val, base64::URL_SAFE));
-                }
+            Nonce::Value(val) if val.len() > 0 => {
+                q_params.push_str("nonce=");
+                q_params.push_str(&base64::encode_config(val, base64::URL_SAFE));
             }
-            Nonce::Size(val) => {
-                if *val > 0 {
-                    q_params.push_str("nonceSize=");
-                    q_params.push_str(&val.to_string());
-                }
+            Nonce::Size(val) if *val > 0 => {
+                q_params.push_str("nonceSize=");
+                q_params.push_str(&val.to_string());
             }
+            _ => {}
         }
 
         new_session_url.set_query(Some(&q_params));
@@ -231,13 +233,11 @@ impl ChallengeResponse {
             .header(reqwest::header::ACCEPT, CRS_MEDIA_TYPE)
             .header(reqwest::header::CONTENT_TYPE, media_type)
             .body(evidence.clone())
-            .send()
-            .map_err(|e| Error::ApiError(e.to_string()))?;
+            .send()?;
 
         match resp.status() {
             reqwest::StatusCode::OK => {
-                let crs: ChallengeResponseSession =
-                    resp.json().map_err(|e| Error::ApiError(e.to_string()))?;
+                let crs: ChallengeResponseSession = resp.json()?;
 
                 if crs.status != "complete" {
                     return Err(Error::ApiError(format!(
@@ -257,7 +257,7 @@ impl ChallengeResponse {
                 return Err(Error::NotImplementedError("asynchronous model".to_string()));
             }
             status => {
-                let pd: ProblemDetails = resp.json().map_err(|e| Error::ApiError(e.to_string()))?;
+                let pd: ProblemDetails = resp.json()?;
 
                 return Err(Error::ApiError(format!(
                     "session response has unexpected status: {}.  Details: {}",
