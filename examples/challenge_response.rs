@@ -6,7 +6,7 @@ extern crate veraison_apiclient;
 
 use veraison_apiclient::*;
 
-fn my_evidence_builder(nonce: &Vec<u8>, accept: &Vec<String>) -> Result<(Vec<u8>, String), Error> {
+fn my_evidence_builder(nonce: &[u8], accept: &[String]) -> Result<(Vec<u8>, String), Error> {
     println!("server challenge: {:?}", nonce);
     println!("acceptable media types: {:#?}", accept);
 

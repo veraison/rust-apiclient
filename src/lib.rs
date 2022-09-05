@@ -38,8 +38,7 @@ impl std::fmt::Debug for Error {
 /// The application is passed the session nonce and the list of supported
 /// evidence media types and shall return the computed evidence together with
 /// the selected media type.
-type EvidenceCreationCb =
-    fn(nonce: &Vec<u8>, accepted: &Vec<String>) -> Result<(Vec<u8>, String), Error>;
+type EvidenceCreationCb = fn(nonce: &[u8], accepted: &[String]) -> Result<(Vec<u8>, String), Error>;
 
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
@@ -285,11 +284,11 @@ struct ChallengeResponseSession {
 }
 
 impl ChallengeResponseSession {
-    pub fn nonce(&self) -> &Vec<u8> {
+    pub fn nonce(&self) -> &[u8] {
         return &self.nonce;
     }
 
-    pub fn accept(&self) -> &Vec<String> {
+    pub fn accept(&self) -> &[String] {
         return &self.accept;
     }
 }
@@ -316,7 +315,7 @@ mod tests {
 
     const TEST_BASE_URL: &str = "https://veraison.example/challenge-response/v1/";
 
-    fn test_evidence_builder(_: &Vec<u8>, _: &Vec<String>) -> Result<(Vec<u8>, String), Error> {
+    fn test_evidence_builder(_: &[u8], _: &[String]) -> Result<(Vec<u8>, String), Error> {
         Ok((vec![0xff], "application/my".to_string()))
     }
 
