@@ -1,7 +1,7 @@
 // Copyright 2022 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
-#[derive(thiserror::Error, PartialEq)]
+#[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("configuration error: {0}")]
     ConfigError(String),
@@ -209,7 +209,7 @@ impl ChallengeResponse {
         let mut q_params = String::new();
 
         match nonce {
-            Nonce::Value(val) if val.is_empty() => {
+            Nonce::Value(val) if !val.is_empty() => {
                 q_params.push_str("nonce=");
                 q_params.push_str(&base64::encode_config(val, base64::URL_SAFE));
             }
@@ -264,10 +264,10 @@ impl ChallengeResponse {
             status => {
                 let pd: ProblemDetails = resp.json()?;
 
-                return Err(Error::ApiError(format!(
+                Err(Error::ApiError(format!(
                     "session response has unexpected status: {}.  Details: {}",
                     status, pd.detail,
-                )));
+                )))
             }
         }
     }
