@@ -1,7 +1,12 @@
 [package]
 name = "veraison-apiclient"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
+repository = "https://github.com/veraison/rust-apiclient"
+description = "client API for Veraison"
+license = "Apache-2.0"
+keywords = ["attestation", "verification", "veraison"]
+categories = ["web-programming"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

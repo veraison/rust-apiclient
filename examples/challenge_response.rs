@@ -24,7 +24,7 @@ fn main() {
 
     // create a ChallengeResponse object
     let cr = ChallengeResponseBuilder::new()
-        .with_base_url(api_endpoint.to_string())
+        .with_base_url(api_endpoint)
         .with_http_client(http_client)
         .with_evidence_creation_cb(my_evidence_builder)
         .build()
