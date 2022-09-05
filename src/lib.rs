@@ -318,8 +318,10 @@ struct ProblemDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::blocking::Client;
 
-    const TEST_BASE_URL: &str = "https://veraison.example/challenge-response/v1/";
+    const TEST_BASE_URL_OK: &str = "https://veraison.example/challenge-response/v1/";
+    const TEST_BASE_URL_NOT_ABSOLUTE: &str = "/challenge-response/v1/";
 
     fn test_evidence_builder(_: &[u8], _: &[String]) -> Result<(Vec<u8>, String), Error> {
         Ok((vec![0xff], "application/my".to_string()))
@@ -327,7 +329,7 @@ mod tests {
 
     #[test]
     fn default_constructor() {
-        let b = ChallengeResponseBuilder::new();
+        let b: ChallengeResponseBuilder = Default::default();
 
         // expected initial state
         assert!(b.base_url.is_none());
@@ -337,29 +339,56 @@ mod tests {
 
     #[test]
     fn build_ok() {
-        /*
-        let good_base_url = TEST_BASE_URL.to_string();
-        */
+        let http_client = Client::builder().build().unwrap();
+
+        let b = ChallengeResponseBuilder::new()
+            .with_base_url(TEST_BASE_URL_OK.to_string())
+            .with_http_client(http_client)
+            .with_evidence_creation_cb(test_evidence_builder);
+
+        assert!(b.build().is_ok());
     }
 
     #[test]
     fn build_fail_base_url_not_absolute() {
-        /*
-        let bad_base_url = "/challenge-response/v1/".to_string();
-        */
+        let http_client = Client::builder().build().unwrap();
+
+        let b = ChallengeResponseBuilder::new()
+            .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string())
+            .with_http_client(http_client)
+            .with_evidence_creation_cb(test_evidence_builder);
+
+        assert!(b.build().is_err());
     }
 
     #[test]
-    fn run_fail_nonce_too_short() {
-        /*
-        let nonce_too_short = Vector<u8>::new();
-        */
+    fn build_fail_missing_base_url() {
+        let http_client = Client::builder().build().unwrap();
+
+        let b = ChallengeResponseBuilder::new()
+            .with_http_client(http_client)
+            .with_evidence_creation_cb(test_evidence_builder);
+
+        assert!(b.build().is_err());
     }
 
     #[test]
-    fn run_fail_nonce_sz_too_short() {
-        /*
-        let nonce_sz_too_short = 0;
-        */
+    fn build_fail_missing_http_client() {
+        let b = ChallengeResponseBuilder::new()
+            .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string())
+            .with_evidence_creation_cb(test_evidence_builder);
+
+        assert!(b.build().is_err());
+    }
+
+    #[test]
+    fn build_fail_missing_evidence_creation_cb() {
+        let http_client = Client::builder().build().unwrap();
+
+        let b = ChallengeResponseBuilder::new()
+            .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string())
+            .with_http_client(http_client);
+
+        assert!(b.build().is_err());
     }
 }
