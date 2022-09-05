@@ -84,18 +84,24 @@ impl ChallengeResponseBuilder {
     pub fn build(self) -> Result<ChallengeResponse, Error> {
         let base_url_str = self
             .base_url
-            .ok_or(Error::ConfigError("missing API endpoint".to_string()))?;
+            .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
 
         Ok(ChallengeResponse {
             base_url: url::Url::parse(&base_url_str)
                 .map_err(|e| Error::ConfigError(e.to_string()))?,
             http_client: self
                 .http_client
-                .ok_or(Error::ConfigError("missing HTTP client".to_string()))?,
-            evidence_creation_cb: self.evidence_creation_cb.ok_or(Error::ConfigError(
-                "missing evidence creation callback".to_string(),
-            ))?,
+                .ok_or_else(|| Error::ConfigError("missing HTTP client".to_string()))?,
+            evidence_creation_cb: self.evidence_creation_cb.ok_or_else(|| {
+                Error::ConfigError("missing evidence creation callback".to_string())
+            })?,
         })
+    }
+}
+
+impl Default for ChallengeResponseBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -163,9 +169,9 @@ impl ChallengeResponse {
         let loc = resp
             .headers()
             .get("location")
-            .ok_or(Error::ApiError(
-                "cannot determine URI of the session resource".to_string(),
-            ))?
+            .ok_or_else(|| {
+                Error::ApiError("cannot determine URI of the session resource".to_string())
+            })?
             .to_str()
             .map_err(|e| Error::ApiError(e.to_string()))?;
 
@@ -190,7 +196,7 @@ impl ChallengeResponse {
             .header(reqwest::header::ACCEPT, CRS_MEDIA_TYPE)
             .send()?;
 
-        return Ok(r);
+        Ok(r)
     }
 
     fn new_session_request_url(&self, nonce: &Nonce) -> Result<url::Url, Error> {
@@ -203,7 +209,7 @@ impl ChallengeResponse {
         let mut q_params = String::new();
 
         match nonce {
-            Nonce::Value(val) if val.len() > 0 => {
+            Nonce::Value(val) if val.is_empty() => {
                 q_params.push_str("nonce=");
                 q_params.push_str(&base64::encode_config(val, base64::URL_SAFE));
             }
@@ -221,7 +227,7 @@ impl ChallengeResponse {
 
     fn challenge_response(
         &self,
-        evidence: &Vec<u8>,
+        evidence: &[u8],
         media_type: &str,
         session_url: &str,
     ) -> Result<String, Error> {
@@ -231,7 +237,7 @@ impl ChallengeResponse {
             .post(session_url)
             .header(reqwest::header::ACCEPT, CRS_MEDIA_TYPE)
             .header(reqwest::header::CONTENT_TYPE, media_type)
-            .body(evidence.clone())
+            .body(evidence.to_owned())
             .send()?;
 
         match resp.status() {
@@ -245,15 +251,15 @@ impl ChallengeResponse {
                     )));
                 }
 
-                let result = crs.result.ok_or(Error::ApiError(
-                    "no attestation results found in completed session".to_string(),
-                ))?;
+                let result = crs.result.ok_or_else(|| {
+                    Error::ApiError("no attestation results found in completed session".to_string())
+                })?;
 
-                return Ok(result);
+                Ok(result)
             }
             reqwest::StatusCode::ACCEPTED => {
                 // TODO(tho)
-                return Err(Error::NotImplementedError("asynchronous model".to_string()));
+                Err(Error::NotImplementedError("asynchronous model".to_string()))
             }
             status => {
                 let pd: ProblemDetails = resp.json()?;
@@ -267,7 +273,7 @@ impl ChallengeResponse {
     }
 }
 
-const CRS_MEDIA_TYPE: &'static str = "application/vnd.veraison.challenge-response-session+json";
+const CRS_MEDIA_TYPE: &str = "application/vnd.veraison.challenge-response-session+json";
 
 #[serde_with::serde_as]
 #[serde_with::skip_serializing_none]
@@ -285,11 +291,11 @@ struct ChallengeResponseSession {
 
 impl ChallengeResponseSession {
     pub fn nonce(&self) -> &[u8] {
-        return &self.nonce;
+        &self.nonce
     }
 
     pub fn accept(&self) -> &[String] {
-        return &self.accept;
+        &self.accept
     }
 }
 
