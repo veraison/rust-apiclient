@@ -1,10 +1,12 @@
+// Copyright 2022 Contributors to the Veraison project.
+// SPDX-License-Identifier: Apache-2.0
+
 extern crate reqwest;
 extern crate veraison_apiclient;
 
-fn my_evidence_builder(
-    nonce: &Vec<u8>,
-    accept: &Vec<String>,
-) -> Result<(Vec<u8>, String), veraison_apiclient::Error> {
+use veraison_apiclient::*;
+
+fn my_evidence_builder(nonce: &Vec<u8>, accept: &Vec<String>) -> Result<(Vec<u8>, String), Error> {
     println!("server challenge: {:?}", nonce);
     println!("acceptable media types: {:#?}", accept);
 
@@ -18,20 +20,20 @@ fn my_evidence_builder(
 
 fn main() {
     let api_endpoint = "http://127.0.0.1:8080/challenge-response/v1/".to_string();
-    let nonce = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef];
-    let http_client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
+    let http_client = reqwest::blocking::Client::builder().build().unwrap();
+
+    // create a ChallengeResponse object
+    let cr = ChallengeResponseBuilder::new()
+        .with_base_url(api_endpoint.to_string())
+        .with_http_client(http_client)
+        .with_evidence_creation_cb(my_evidence_builder)
         .build()
         .unwrap();
 
-    let mut c = veraison_apiclient::ChallengeResponseConfig::new();
+    //let nonce = Nonce::Value(vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef]);
+    let nonce = Nonce::Size(0);
 
-    c.set_base_url(api_endpoint).unwrap();
-    c.set_nonce(nonce).unwrap();
-    c.set_http_client(http_client);
-    c.set_evidence_builder(my_evidence_builder);
-
-    match c.run() {
+    match cr.run(nonce) {
         Err(e) => println!("Error: {}", e),
         Ok(attestation_result) => println!("Attestation Result: {}", attestation_result),
     }
