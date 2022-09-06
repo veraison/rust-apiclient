@@ -1,7 +1,6 @@
 // Copyright 2022 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
-extern crate reqwest;
 extern crate veraison_apiclient;
 
 use veraison_apiclient::*;
@@ -20,12 +19,10 @@ fn my_evidence_builder(nonce: &[u8], accept: &[String]) -> Result<(Vec<u8>, Stri
 
 fn main() {
     let api_endpoint = "http://127.0.0.1:8080/challenge-response/v1/".to_string();
-    let http_client = reqwest::blocking::Client::builder().build().unwrap();
 
     // create a ChallengeResponse object
     let cr = ChallengeResponseBuilder::new()
         .with_base_url(api_endpoint)
-        .with_http_client(http_client)
         .with_evidence_creation_cb(my_evidence_builder)
         .build()
         .unwrap();
