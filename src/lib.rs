@@ -43,7 +43,7 @@ type EvidenceCreationCb = fn(nonce: &[u8], accepted: &[String]) -> Result<(Vec<u
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
     base_url: Option<String>,
-    http_client: Option<reqwest::blocking::Client>,
+    // TODO(tho) add TLS config / authn tokens etc.
     evidence_creation_cb: Option<EvidenceCreationCb>,
 }
 
@@ -52,7 +52,6 @@ impl ChallengeResponseBuilder {
     pub fn new() -> Self {
         Self {
             base_url: None,
-            http_client: None,
             evidence_creation_cb: None,
         }
     }
@@ -62,13 +61,6 @@ impl ChallengeResponseBuilder {
     /// "https://veraison.example/challenge-response/v1/".
     pub fn with_base_url(mut self, v: String) -> ChallengeResponseBuilder {
         self.base_url = Some(v);
-        self
-    }
-
-    /// Use this method to supply a fully configured reqwest::blocking::Client
-    /// used for communicating with the Veraison service.
-    pub fn with_http_client(mut self, v: reqwest::blocking::Client) -> ChallengeResponseBuilder {
-        self.http_client = Some(v);
         self
     }
 
@@ -89,9 +81,7 @@ impl ChallengeResponseBuilder {
         Ok(ChallengeResponse {
             base_url: url::Url::parse(&base_url_str)
                 .map_err(|e| Error::ConfigError(e.to_string()))?,
-            http_client: self
-                .http_client
-                .ok_or_else(|| Error::ConfigError("missing HTTP client".to_string()))?,
+            http_client: reqwest::blocking::Client::builder().build()?,
             evidence_creation_cb: self.evidence_creation_cb.ok_or_else(|| {
                 Error::ConfigError("missing evidence creation callback".to_string())
             })?,
@@ -318,7 +308,6 @@ struct ProblemDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::blocking::Client;
 
     const TEST_BASE_URL_OK: &str = "https://veraison.example/challenge-response/v1/";
     const TEST_BASE_URL_NOT_ABSOLUTE: &str = "/challenge-response/v1/";
@@ -333,17 +322,13 @@ mod tests {
 
         // expected initial state
         assert!(b.base_url.is_none());
-        assert!(b.http_client.is_none());
         assert!(b.evidence_creation_cb.is_none());
     }
 
     #[test]
     fn build_ok() {
-        let http_client = Client::builder().build().unwrap();
-
         let b = ChallengeResponseBuilder::new()
             .with_base_url(TEST_BASE_URL_OK.to_string())
-            .with_http_client(http_client)
             .with_evidence_creation_cb(test_evidence_builder);
 
         assert!(b.build().is_ok());
@@ -351,11 +336,8 @@ mod tests {
 
     #[test]
     fn build_fail_base_url_not_absolute() {
-        let http_client = Client::builder().build().unwrap();
-
         let b = ChallengeResponseBuilder::new()
             .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string())
-            .with_http_client(http_client)
             .with_evidence_creation_cb(test_evidence_builder);
 
         assert!(b.build().is_err());
@@ -363,31 +345,15 @@ mod tests {
 
     #[test]
     fn build_fail_missing_base_url() {
-        let http_client = Client::builder().build().unwrap();
-
-        let b = ChallengeResponseBuilder::new()
-            .with_http_client(http_client)
-            .with_evidence_creation_cb(test_evidence_builder);
-
-        assert!(b.build().is_err());
-    }
-
-    #[test]
-    fn build_fail_missing_http_client() {
-        let b = ChallengeResponseBuilder::new()
-            .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string())
-            .with_evidence_creation_cb(test_evidence_builder);
+        let b = ChallengeResponseBuilder::new().with_evidence_creation_cb(test_evidence_builder);
 
         assert!(b.build().is_err());
     }
 
     #[test]
     fn build_fail_missing_evidence_creation_cb() {
-        let http_client = Client::builder().build().unwrap();
-
-        let b = ChallengeResponseBuilder::new()
-            .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string())
-            .with_http_client(http_client);
+        let b =
+            ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string());
 
         assert!(b.build().is_err());
     }
