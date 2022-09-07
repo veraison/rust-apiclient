@@ -230,35 +230,44 @@ impl ChallengeResponse {
             .body(evidence.to_owned())
             .send()?;
 
-        match resp.status() {
-            reqwest::StatusCode::OK => {
-                let crs: ChallengeResponseSession = resp.json()?;
+        let status = resp.status();
 
-                if crs.status != "complete" {
-                    return Err(Error::ApiError(format!(
-                        "unexpected session state: {}",
-                        crs.status
-                    )));
+        if status.is_success() {
+            match status {
+                reqwest::StatusCode::OK => {
+                    let crs: ChallengeResponseSession = resp.json()?;
+
+                    if crs.status != "complete" {
+                        return Err(Error::ApiError(format!(
+                            "unexpected session state: {}",
+                            crs.status
+                        )));
+                    }
+
+                    let result = crs.result.ok_or_else(|| {
+                        Error::ApiError(
+                            "no attestation results found in completed session".to_string(),
+                        )
+                    })?;
+
+                    Ok(result)
                 }
-
-                let result = crs.result.ok_or_else(|| {
-                    Error::ApiError("no attestation results found in completed session".to_string())
-                })?;
-
-                Ok(result)
+                reqwest::StatusCode::ACCEPTED => {
+                    // TODO(tho)
+                    Err(Error::NotImplementedError("asynchronous model".to_string()))
+                }
+                status => Err(Error::ApiError(format!(
+                    "session response has unexpected success status: {}",
+                    status,
+                ))),
             }
-            reqwest::StatusCode::ACCEPTED => {
-                // TODO(tho)
-                Err(Error::NotImplementedError("asynchronous model".to_string()))
-            }
-            status => {
-                let pd: ProblemDetails = resp.json()?;
+        } else {
+            let pd: ProblemDetails = resp.json()?;
 
-                Err(Error::ApiError(format!(
-                    "session response has unexpected status: {}.  Details: {}",
-                    status, pd.detail,
-                )))
-            }
+            Err(Error::ApiError(format!(
+                "session response has error status: {}.  Details: {}",
+                status, pd.detail,
+            )))
         }
     }
 }
@@ -267,7 +276,7 @@ const CRS_MEDIA_TYPE: &str = "application/vnd.veraison.challenge-response-sessio
 
 #[serde_with::serde_as]
 #[serde_with::skip_serializing_none]
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct ChallengeResponseSession {
     #[serde_as(as = "serde_with::base64::Base64")]
     nonce: Vec<u8>,
@@ -290,7 +299,7 @@ impl ChallengeResponseSession {
 }
 
 #[serde_with::serde_as]
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct EvidenceBlob {
     r#type: String,
     #[serde_as(as = "serde_with::base64::Base64")]
@@ -308,6 +317,8 @@ struct ProblemDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_BASE_URL_OK: &str = "https://veraison.example/challenge-response/v1/";
     const TEST_BASE_URL_NOT_ABSOLUTE: &str = "/challenge-response/v1/";
@@ -356,5 +367,42 @@ mod tests {
             ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string());
 
         assert!(b.build().is_err());
+    }
+
+    #[async_std::test]
+    async fn new_session_request_ok() {
+        let mock_server = MockServer::start().await;
+        let nonce_value = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef];
+        let nonce = Nonce::Value(nonce_value.clone());
+
+        let response = ResponseTemplate::new(201)
+            .insert_header("location", "1234")
+            .set_body_json(ChallengeResponseSession {
+                nonce: nonce_value,
+                status: "waiting".to_string(),
+                accept: vec!["application/vnd.1".to_string()],
+                evidence: None,
+                result: None,
+                expiry: chrono::Utc::now().naive_utc(),
+            });
+
+        Mock::given(method("POST"))
+            .and(path("/newSession"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let cr = ChallengeResponseBuilder::new()
+            .with_base_url(mock_server.uri())
+            .with_evidence_creation_cb(test_evidence_builder)
+            .build()
+            .unwrap();
+
+        let rv = cr
+            .new_session(&nonce)
+            .unwrap_or_else(|e| panic!("unexpected failure: {}", e));
+
+        // Expect we are given the expected location URL
+        assert_eq!(rv.0, format!("{}/1234", mock_server.uri()));
     }
 }

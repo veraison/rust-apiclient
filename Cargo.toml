@@ -20,4 +20,8 @@ chrono = "0.4"
 
 [dependencies.serde_with]
 version = "1.14.0"
-features = [ "base64", "chrono" ]
+features = ["base64", "chrono"]
+
+[dev-dependencies]
+wiremock = "0.5"
+async-std = { version = "1.6.5", features = ["attributes"] }
