@@ -405,4 +405,47 @@ mod tests {
         // Expect we are given the expected location URL
         assert_eq!(rv.0, format!("{}/1234", mock_server.uri()));
     }
+
+    #[async_std::test]
+    async fn challenge_response_ok() {
+        let mock_server = MockServer::start().await;
+        let nonce_value = vec![0xbe, 0xef];
+        let evidence_value: Vec<u8> = vec![0, 1];
+        let evidence = EvidenceBlob {
+            r#type: "application/vnd.1".to_string(),
+            value: evidence_value.clone(),
+        };
+        let attestation_result = "a.b.c".to_string();
+
+        let response = ResponseTemplate::new(200).set_body_json(ChallengeResponseSession {
+            nonce: nonce_value,
+            status: "complete".to_string(),
+            accept: vec!["application/vnd.1".to_string()],
+            evidence: Some(evidence),
+            result: Some(attestation_result.clone()),
+            expiry: chrono::Utc::now().naive_utc(),
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/session/5678"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let cr = ChallengeResponseBuilder::new()
+            .with_base_url(mock_server.uri())
+            .with_evidence_creation_cb(test_evidence_builder)
+            .build()
+            .unwrap();
+
+        let session_url = mock_server.uri() + "/session/5678";
+        let media_type = "application/vnd.1";
+
+        let rv = cr
+            .challenge_response(&evidence_value, media_type, &session_url)
+            .unwrap_or_else(|e| panic!("unexpected failure: {}", e));
+
+        // Expect we are given the expected attestation result
+        assert_eq!(rv, attestation_result)
+    }
 }
