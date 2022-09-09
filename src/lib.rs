@@ -398,9 +398,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let rv = cr
-            .new_session(&nonce)
-            .unwrap_or_else(|e| panic!("unexpected failure: {}", e));
+        let rv = cr.new_session(&nonce).expect("unexpected failure");
 
         // Expect we are given the expected location URL
         assert_eq!(rv.0, format!("{}/1234", mock_server.uri()));
@@ -443,7 +441,7 @@ mod tests {
 
         let rv = cr
             .challenge_response(&evidence_value, media_type, &session_url)
-            .unwrap_or_else(|e| panic!("unexpected failure: {}", e));
+            .expect("unexpected failure");
 
         // Expect we are given the expected attestation result
         assert_eq!(rv, attestation_result)
