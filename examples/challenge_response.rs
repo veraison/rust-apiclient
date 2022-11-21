@@ -23,14 +23,13 @@ fn main() {
     // create a ChallengeResponse object
     let cr = ChallengeResponseBuilder::new()
         .with_base_url(api_endpoint)
-        .with_evidence_creation_cb(my_evidence_builder)
         .build()
         .unwrap();
 
     let nonce = Nonce::Value(vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef]);
     // alternatively, to let Veraison pick the challenge: "let nonce = Nonce::Size(32);"
 
-    match cr.run(nonce) {
+    match cr.run(nonce, my_evidence_builder) {
         Err(e) => println!("Error: {}", e),
         Ok(attestation_result) => println!("Attestation Result: {}", attestation_result),
     }
