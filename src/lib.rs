@@ -324,16 +324,15 @@ mod tests {
 
     #[test]
     fn build_ok() {
-        let b = ChallengeResponseBuilder::new()
-            .with_base_url(TEST_BASE_URL_OK.to_string());
+        let b = ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_OK.to_string());
 
         assert!(b.build().is_ok());
     }
 
     #[test]
     fn build_fail_base_url_not_absolute() {
-        let b = ChallengeResponseBuilder::new()
-            .with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string());
+        let b =
+            ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string());
 
         assert!(b.build().is_err());
     }
