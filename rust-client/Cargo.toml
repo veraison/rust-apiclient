@@ -3,6 +3,7 @@ name = "veraison-apiclient"
 version = "0.0.1"
 edition = "2021"
 repository = "https://github.com/veraison/rust-apiclient"
+readme = "README.md"
 description = "client API for Veraison"
 license = "Apache-2.0"
 keywords = ["attestation", "verification", "veraison"]
