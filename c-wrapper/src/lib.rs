@@ -147,14 +147,14 @@ struct ShimChallengeResponseSession {
 /// It is the caller's responsibility to ensure that `out_session` is
 /// not a null pointer.
 #[no_mangle]
-pub extern "C" fn open_challenge_response_session(
+pub unsafe extern "C" fn open_challenge_response_session(
     base_url: *const libc::c_char,
     nonce_size: libc::size_t,
     nonce: *const u8,
     out_session: *mut *mut ChallengeResponseSession,
 ) -> VeraisonResult {
-    // Unsafe region because we have to trust the caller's char* ptr.
-    let url_str: &str = unsafe {
+    // We have to trust the caller's char* ptr.
+    let url_str: &str = {
         let url_cstr = CStr::from_ptr(base_url);
         url_cstr.to_str().unwrap()
     };
@@ -162,15 +162,15 @@ pub extern "C" fn open_challenge_response_session(
     // Make a Nonce variant according to the given nonce_size and nonce arguments. If the nonce is null,
     // this implies the Nonce::Size() variant, otherwise it's the Nonce::Value() variant.
     let nonce_converted: Nonce = {
-        if nonce == std::ptr::null() {
+        if nonce.is_null() {
             // Null pointer implies a request for the server to generate the nonce
             // of the given size. The size is also permitted to be zero, in which case
             // the server will choose the size as well as generating the nonce.
             Nonce::Size(nonce_size)
         } else {
             // Non-null pointer means we are making a Nonce::Value variant of the
-            // given size. We have to trust the caller's pointer here, hence unsafe region.
-            let bytes = unsafe { slice::from_raw_parts(nonce, nonce_size) };
+            // given size. We have to trust the caller's pointer here.
+            let bytes = slice::from_raw_parts(nonce, nonce_size);
             Nonce::Value(Vec::from(bytes))
         }
     };
@@ -222,7 +222,7 @@ pub extern "C" fn open_challenge_response_session(
     let mut shim_session = ShimChallengeResponseSession {
         client: Box::new(Some(cr)),
         session_url_cstring: CString::new(session_uri.as_str()).unwrap(),
-        nonce_vec: session_nonce.clone(),
+        nonce_vec: session_nonce,
         accept_type_cstring_vec: media_type_cstrings,
         accept_type_ptr_vec: Vec::with_capacity(session_accept_types.len()),
         attestation_result_cstring: CString::new("").unwrap(),
@@ -255,7 +255,7 @@ pub extern "C" fn open_challenge_response_session(
     // C world will pass this pointer back to us in free_challenge_response_session(), at which point
     // we do Box::from_raw() to bring the memory back under Rust management.
     let session_ptr = Box::into_raw(raw_shim_session);
-    unsafe { *out_session = session_ptr };
+    *out_session = session_ptr;
 
     VeraisonResult::Ok
 }
@@ -281,26 +281,26 @@ pub extern "C" fn open_challenge_response_session(
 /// - The `media_type` parameter is a non-NULL pointer to a valid NUL-terminated character string that
 /// will not be mutated for the duration of this function call.
 #[no_mangle]
-pub extern "C" fn challenge_response(
+pub unsafe extern "C" fn challenge_response(
     session: *mut ChallengeResponseSession,
     evidence_size: libc::size_t,
     evidence: *const u8,
     media_type: *const libc::c_char,
 ) -> VeraisonResult {
-    // Unsafe because we need to trust the caller's pointer
-    let mut raw_session = unsafe { Box::from_raw(session) };
+    // Need to trust the caller's pointer
+    let mut raw_session = Box::from_raw(session);
 
     let mut shim_session =
-        unsafe { Box::from_raw(raw_session.session_wrapper as *mut ShimChallengeResponseSession) };
+        Box::from_raw(raw_session.session_wrapper as *mut ShimChallengeResponseSession);
 
-    // Unsafe because we need to trust the caller's pointer
-    let media_type_str: &str = unsafe {
+    // Need to trust the caller's pointer
+    let media_type_str: &str = {
         let url_cstr = CStr::from_ptr(media_type);
         url_cstr.to_str().unwrap()
     };
 
-    // Unsafe because we need to trust the caller's pointer and size
-    let evidence_bytes = unsafe { slice::from_raw_parts(evidence, evidence_size) };
+    // Need to trust the caller's pointer and size
+    let evidence_bytes = slice::from_raw_parts(evidence, evidence_size);
 
     // Actually call the client
     let client_result = match shim_session.client.as_ref() {
@@ -350,11 +350,10 @@ pub extern "C" fn challenge_response(
 /// The caller must guarantee that the `session` pointer is a non-NULL pointer to a valid session
 /// that was previously output from a call to [`open_challenge_response_session()`].
 #[no_mangle]
-pub extern "C" fn free_challenge_response_session(session: *mut ChallengeResponseSession) -> () {
+pub unsafe extern "C" fn free_challenge_response_session(session: *mut ChallengeResponseSession) {
     // Just re-box the session and let Rust drop it all automatically.
-    let raw_session = unsafe { Box::from_raw(session) };
-    let _ =
-        unsafe { Box::from_raw(raw_session.session_wrapper as *mut ShimChallengeResponseSession) };
+    let raw_session = Box::from_raw(session);
+    let _ = Box::from_raw(raw_session.session_wrapper as *mut ShimChallengeResponseSession);
 }
 
 // This function is used when there is an error while attempting to create the session - either because the
@@ -479,12 +478,14 @@ mod tests {
         let mut session: *mut ChallengeResponseSession = std::ptr::null_mut();
 
         // Call as if from C
-        let result = open_challenge_response_session(
-            mock_server.uri().as_ptr() as *const libc::c_char,
-            32,
-            std::ptr::null(),
-            &mut session,
-        );
+        let result = unsafe {
+            open_challenge_response_session(
+                mock_server.uri().as_ptr() as *const libc::c_char,
+                32,
+                std::ptr::null(),
+                &mut session,
+            )
+        };
 
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
@@ -515,17 +516,19 @@ mod tests {
         let evidence_value: Vec<u8> = vec![0, 1];
         let media_type = "application/psa-attestation-token";
 
-        let result = challenge_response(
-            session,
-            evidence_value.len(),
-            evidence_value.as_ptr(),
-            media_type.as_ptr() as *const libc::c_char,
-        );
+        let result = unsafe {
+            challenge_response(
+                session,
+                evidence_value.len(),
+                evidence_value.as_ptr(),
+                media_type.as_ptr() as *const libc::c_char,
+            )
+        };
 
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
 
         // Dispose
-        free_challenge_response_session(session);
+        unsafe { free_challenge_response_session(session) };
     }
 }
