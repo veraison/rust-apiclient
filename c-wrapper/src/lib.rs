@@ -78,6 +78,7 @@ pub struct ChallengeResponseSession {
 
 /// C-compatible enum representation of the error enum from the Rust client.
 #[repr(C)]
+#[derive(Debug, PartialEq)]
 pub enum VeraisonResult {
     Ok = 0,
     ConfigError,
@@ -419,5 +420,112 @@ fn translate_error(e: &Error) -> (VeraisonResult, CString) {
             VeraisonResult::NotImplementedError,
             CString::new(s.clone()).unwrap(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[async_std::test]
+    async fn ffi_challenge_response_session_ok() {
+        let mock_server = MockServer::start().await;
+        let session_waiting = r#"
+        {
+            "nonce": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+            "expiry": "2030-10-12T07:20:50.52Z",
+            "accept": [
+                "application/psa-attestation-token",
+                "application/vnd.1",
+                "application/vnd.2",
+                "application/vnd.3"
+            ],
+            "status": "waiting"
+        }"#;
+        let session_complete = r#"
+        {
+            "nonce": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+            "expiry": "2030-10-12T07:20:50.52Z",
+            "accept": [
+                "application/psa-attestation-token",
+                "application/vnd.1",
+                "application/vnd.2",
+                "application/vnd.3"
+            ],
+            "status": "complete",
+            "evidence": {
+                "type": "application/psa-attestation-token",
+                "value": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
+            },
+            "result": "a.b.c"
+        }"#;
+
+        let response = ResponseTemplate::new(201)
+            .insert_header("Location", "/session/1234")
+            .set_body_string(session_waiting)
+            .insert_header(
+                "Content-Type",
+                "application/vnd.veraison.challenge-response-session+json",
+            );
+
+        Mock::given(method("POST"))
+            .and(path("/newSession"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let mut session: *mut ChallengeResponseSession = std::ptr::null_mut();
+
+        // Call as if from C
+        let result = open_challenge_response_session(
+            mock_server.uri().as_ptr() as *const libc::c_char,
+            32,
+            std::ptr::null(),
+            &mut session,
+        );
+
+        // We should have an Ok result
+        assert_eq!(result, VeraisonResult::Ok);
+
+        // Sanity-check session fields
+        unsafe {
+            assert_ne!((*session).session_url, std::ptr::null());
+            assert_eq!((*session).nonce_size, 32);
+            assert_ne!((*session).nonce, std::ptr::null());
+            assert_eq!((*session).accept_type_count, 4);
+            assert_ne!((*session).accept_type_list, std::ptr::null());
+            assert_eq!((*session).attestation_result, std::ptr::null());
+        }
+
+        // Prepare the mock for the next call
+        let response = ResponseTemplate::new(200)
+            .set_body_string(session_complete)
+            .insert_header(
+                "Content-Type",
+                "application/vnd.veraison.challenge-response-session+json",
+            );
+        Mock::given(method("POST"))
+            .and(path("/session/1234"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let evidence_value: Vec<u8> = vec![0, 1];
+        let media_type = "application/psa-attestation-token";
+
+        let result = challenge_response(
+            session,
+            evidence_value.len(),
+            evidence_value.as_ptr(),
+            media_type.as_ptr() as *const libc::c_char,
+        );
+
+        // We should have an Ok result
+        assert_eq!(result, VeraisonResult::Ok);
+
+        // Dispose
+        free_challenge_response_session(session);
     }
 }

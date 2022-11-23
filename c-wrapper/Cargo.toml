@@ -16,5 +16,9 @@ crate-type = ["staticlib"]
 libc = "0.2.137"
 veraison-apiclient = { path = "../rust-client" }
 
+[dev-dependencies]
+wiremock = "0.5"
+async-std = { version = "1.6.5", features = ["attributes"] }
+
 [build-dependencies]
 cbindgen = "0.20.0"
