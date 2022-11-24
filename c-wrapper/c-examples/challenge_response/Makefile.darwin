@@ -2,5 +2,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
 CFLAGS = -Wall
-LDLIBS = -lssl -lcrypto -lgcc_s -lutil -lrt -lpthread -lm -ldl -lc
+LDLIBS = -framework Security -framework CoreFoundation -liconv -lSystem -lresolv -lc -lm -liconv
 include build.mk
