@@ -78,7 +78,7 @@ pub struct ChallengeResponseSession {
 
 /// C-compatible enum representation of the error enum from the Rust client.
 #[repr(C)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum VeraisonResult {
     Ok = 0,
     ConfigError,
