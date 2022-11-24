@@ -10,7 +10,7 @@ use veraison_apiclient::{ChallengeResponse, ChallengeResponseBuilder, Error, Non
 /// This structure represents an active challenge-response API session.
 ///
 /// Instances of this structure are obtained from the [`open_challenge_response_session()`] function,
-/// and must always be disposed using [`free_challenge_response_session()].
+/// and must always be disposed using [`free_challenge_response_session()`].
 ///
 /// The fields in this structure are read-only. The pointers provide access to data that is being
 /// made visible to C client code, but is managed internally with Rust data structures. The pointers
@@ -43,6 +43,11 @@ pub struct ChallengeResponseSession {
     /// If the session is not established successfully (in other words, if
     /// the [`open_challenge_response_session()`] function called returned an error code, then
     /// this pointer will be NULL.
+    ///
+    /// C client code must not dereference or use this pointer value in any way if the
+    /// [`ChallengeResponseSession::nonce_size`] field is zero. This would mean that the API
+    /// endpoint did not allocate a nonce, or use the caller-supplied nonce. This is a failure
+    /// condition that the C client would need to handle, probably by aborting the session.
     nonce: *const u8,
 
     /// The number of accepted media types for evidence.
@@ -55,6 +60,10 @@ pub struct ChallengeResponseSession {
     /// If the session is not established successfully (in other words, if
     /// the [`open_challenge_response_session()`] function called returned an error code, then
     /// this pointer will be NULL.
+    ///
+    /// C client code must not dereference or use this pointer value in any way if the
+    /// [`ChallengeResponseSession::accept_type_count`] field is zero. This would mean that the API
+    /// endpoint does not support any media types, and the session would have to be aborted.
     accept_type_list: *const *const libc::c_char,
 
     /// A pointer to a NUL-terminated string containing the raw attestation result evidence that was
