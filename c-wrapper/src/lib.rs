@@ -477,14 +477,11 @@ mod tests {
 
         let mut session: *mut ChallengeResponseSession = std::ptr::null_mut();
 
+        let base_uri = CString::new(mock_server.uri()).unwrap();
+
         // Call as if from C
         let result = unsafe {
-            open_challenge_response_session(
-                mock_server.uri().as_ptr() as *const libc::c_char,
-                32,
-                std::ptr::null(),
-                &mut session,
-            )
+            open_challenge_response_session(base_uri.as_ptr(), 32, std::ptr::null(), &mut session)
         };
 
         // We should have an Ok result
@@ -514,14 +511,14 @@ mod tests {
             .await;
 
         let evidence_value: Vec<u8> = vec![0, 1];
-        let media_type = "application/psa-attestation-token";
+        let media_type = CString::new("application/psa-attestation-token").unwrap();
 
         let result = unsafe {
             challenge_response(
                 session,
                 evidence_value.len(),
                 evidence_value.as_ptr(),
-                media_type.as_ptr() as *const libc::c_char,
+                media_type.as_ptr(),
             )
         };
 
