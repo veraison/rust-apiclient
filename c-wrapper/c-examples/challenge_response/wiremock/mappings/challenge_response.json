@@ -1,0 +1,28 @@
+{
+    "request": {
+        "method": "POST",
+        "urlPath": "/challenge-response/v1/session/12345678"
+    },
+    "response": {
+        "status": 200,
+        "headers": {
+            "Content-Type": "application/vnd.veraison.challenge-response-session+json"
+        },
+        "jsonBody": {
+            "nonce": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+            "expiry": "2030-10-12T07:20:50.52Z",
+            "accept": [
+                "application/psa-attestation-token",
+                "application/vnd.1",
+                "application/vnd.2",
+                "application/vnd.3"
+            ],
+            "status": "complete",
+            "evidence": {
+                "type": "application/psa-attestation-token",
+                "value": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
+            },
+            "result": "a.b.c"
+        }
+    }
+}

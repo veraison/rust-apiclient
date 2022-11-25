@@ -1,0 +1,30 @@
+# Copyright 2022 Contributors to the Veraison project.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "veraison-apiclient-ffi"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/veraison/rust-apiclient"
+readme = "README.md"
+description = "C-compatible client API for Veraison"
+license = "Apache-2.0"
+keywords = ["attestation", "verification", "veraison"]
+categories = ["web-programming"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "veraison_apiclient_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+libc = "0.2.137"
+veraison-apiclient = { path = "../rust-client" }
+
+[dev-dependencies]
+wiremock = "0.5"
+async-std = { version = "1.6.5", features = ["attributes"] }
+
+[build-dependencies]
+cbindgen = "0.20.0"
