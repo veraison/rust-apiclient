@@ -5,7 +5,7 @@ use std::ffi::{c_void, CStr, CString};
 
 use core::slice;
 
-use veraison_apiclient::{ChallengeResponse, ChallengeResponseBuilder, Error, Nonce};
+use veraison_apiclient::{ChallengeResponse, ChallengeResponseBuilder, Discovery, Error, Nonce};
 
 /// This structure represents an active challenge-response API session.
 ///
@@ -94,6 +94,20 @@ pub enum VeraisonResult {
     ApiError,
     CallbackError,
     NotImplementedError,
+    DataConversionError,
+}
+
+/// This structure describes the characteristics of the Veraison verification API.
+///
+/// An instance of this structure can be obtained from the [`veraison_get_verification_api`] function,
+/// and must be freed by a corresponding call to [`veraison_free_verification_api`].
+#[repr(C)]
+pub struct VeraisonVerificationApi {
+    public_key_der_size: libc::size_t,
+    public_key_der: *const u8,
+    public_key_pem: *const libc::c_char,
+    algorithm: *const libc::c_char,
+    verification_api_wrapper: *mut c_void,
 }
 
 /// This structure contains the Rust-managed objects that are behind the raw pointers sent back to C
@@ -107,6 +121,15 @@ struct ShimChallengeResponseSession {
     accept_type_ptr_vec: Vec<*const libc::c_char>,
     attestation_result_cstring: CString,
     message_cstring: CString,
+}
+
+/// This structure contains the Rust-managed objects that are behind the raw pointers sent back to C
+/// world for the [`VeraisonVerificationApi`] structure. This structure is not visible to C other than
+/// as an opaque (void*) pointer.
+struct ShimVerificationApi {
+    public_key_der_vec: Vec<u8>,
+    public_key_pem_cstring: CString,
+    algorithm_cstring: CString,
 }
 
 /// Establish a new challenge-response API session with the server at the given
@@ -365,6 +388,95 @@ pub unsafe extern "C" fn free_challenge_response_session(session: *mut Challenge
     let _ = Box::from_raw(raw_session.session_wrapper as *mut ShimChallengeResponseSession);
 }
 
+/// Obtains a description of the verification API for a Veraison service running at the given base endpoint.
+///
+/// The [`VeraisonVerificationApi`] structure obtains the information needed to discover and consume the
+/// verification API effectively.
+///
+/// In order to avoid memory or resource leaks, the caller is responsible for freeing the API description
+/// structure by passing it to [`veraison_free_verification_api()`].
+///
+/// # Safety
+///
+/// It is the caller's reponsibility to ensure that `veraison_service_base_url`:
+///
+/// - is not a null pointer
+/// - points to valid, initialized data
+/// - points to memory ending in a null byte
+/// - won't be mutated for the duration of this function call
+///
+/// It is the caller's responsibility to ensure that `out_api` is
+/// not a null pointer.
+#[no_mangle]
+pub unsafe extern "C" fn veraison_get_verification_api(
+    veraison_service_base_url: *const libc::c_char,
+    out_api: *mut *mut VeraisonVerificationApi,
+) -> VeraisonResult {
+    // We have to trust the caller's char* ptr.
+    let url_str: &str = {
+        let url_cstr = CStr::from_ptr(veraison_service_base_url);
+        url_cstr.to_str().unwrap()
+    };
+
+    let discovery = Discovery::from_base_url(String::from(url_str));
+
+    let discovery = discovery.unwrap();
+
+    let verification_api = discovery.get_verification_api();
+
+    let verification_api = verification_api.unwrap();
+
+    let public_key_der_vec = verification_api.ear_verification_key_as_der();
+
+    let public_key_der_vec = public_key_der_vec.unwrap();
+
+    let public_key_pem = verification_api.ear_verification_key_as_pem();
+
+    let public_key_pem = public_key_pem.unwrap();
+
+    let algorithm = verification_api.ear_verification_algorithm();
+
+    let shim = ShimVerificationApi {
+        public_key_der_vec: public_key_der_vec,
+        public_key_pem_cstring: CString::new(public_key_pem).unwrap(),
+        algorithm_cstring: CString::new(algorithm).unwrap(),
+    };
+
+    let api = VeraisonVerificationApi {
+        public_key_der_size: shim.public_key_der_vec.len(),
+        public_key_der: shim.public_key_der_vec.as_ptr(),
+        public_key_pem: shim.public_key_pem_cstring.as_ptr(),
+        algorithm: shim.algorithm_cstring.as_ptr(),
+        verification_api_wrapper: Box::into_raw(Box::new(shim)) as *mut c_void,
+    };
+
+    let api_ptr = Box::into_raw(Box::new(api));
+    *out_api = api_ptr;
+
+    VeraisonResult::Ok
+}
+
+/// Completely dispose of all client-side memory and resources associated with the given
+/// verification API description.
+///
+/// Upon exit from this function, the given pointer should be assumed no longer valid.
+///
+/// Note: This is a client-side operation only. It takes no action on the verification service.
+/// This function only exists so that client-side memory shared between Rust and C can be
+/// safely freed.
+///
+/// # Safety
+/// The caller must guarantee that the `verification_api` pointer is a non-NULL pointer to a valid session
+/// that was previously output from a call to [`veraison_get_verification_api()`].
+#[no_mangle]
+pub unsafe extern "C" fn veraison_free_verification_api(
+    verification_api: *mut VeraisonVerificationApi,
+) {
+    // Just re-box the object and let Rust drop it automatically.
+    let raw_api = Box::from_raw(verification_api);
+    let _ = Box::from_raw(raw_api.verification_api_wrapper as *mut ShimVerificationApi);
+}
+
 // This function is used when there is an error while attempting to create the session - either because the
 // [ChallengeResponseBuilder::build()] method call failed, or because [ChallengeResponse::new_session()] failed.
 // In either case, we stub out an empty session containing just the error message.
@@ -426,6 +538,10 @@ fn translate_error(e: &Error) -> (VeraisonResult, CString) {
         ),
         Error::NotImplementedError(s) => (
             VeraisonResult::NotImplementedError,
+            CString::new(s.clone()).unwrap(),
+        ),
+        Error::DataConversionError(s) => (
+            VeraisonResult::DataConversionError,
             CString::new(s.clone()).unwrap(),
         ),
     }

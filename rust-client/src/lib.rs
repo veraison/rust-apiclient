@@ -11,6 +11,8 @@ pub enum Error {
     CallbackError(String),
     #[error("feature not implemented: {0}")]
     NotImplementedError(String),
+    #[error("Data conversion error: {0}")]
+    DataConversionError(String),
 }
 
 // While for other error sources the mapping may be more subtle, all reqwest
@@ -21,13 +23,20 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+impl From<jsonwebkey::ConversionError> for Error {
+    fn from(e: jsonwebkey::ConversionError) -> Self {
+        Error::DataConversionError(e.to_string())
+    }
+}
+
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::NotImplementedError(e)
             | Error::ConfigError(e)
             | Error::ApiError(e)
-            | Error::CallbackError(e) => {
+            | Error::CallbackError(e)
+            | Error::DataConversionError(e) => {
                 write!(f, "{}", e)
             }
         }
@@ -264,6 +273,7 @@ impl ChallengeResponse {
 }
 
 const CRS_MEDIA_TYPE: &str = "application/vnd.veraison.challenge-response-session+json";
+const DISCOVERY_MEDIA_TYPE: &str = "application/vnd.veraison.discovery+json";
 
 #[serde_with::serde_as]
 #[serde_with::skip_serializing_none]
@@ -295,6 +305,77 @@ pub struct EvidenceBlob {
     r#type: String,
     #[serde_as(as = "serde_with::base64::Base64")]
     value: Vec<u8>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct VerificationApi {
+    ear_verification_key: jsonwebkey::JsonWebKey,
+    media_types: Vec<String>,
+    version: String,
+}
+
+impl VerificationApi {
+    pub fn ear_verification_key_as_der(&self) -> Result<Vec<u8>, Error> {
+        let key = &self.ear_verification_key.key;
+        (*key).try_to_der().map_err(|e| Error::DataConversionError(e.to_string()))
+    }
+
+    pub fn ear_verification_key_as_pem(&self) -> Result<String, Error> {
+        let key = &self.ear_verification_key.key;
+        (*key).try_to_pem().map_err(|e| Error::DataConversionError(e.to_string()))
+    }
+
+    pub fn ear_verification_algorithm(&self) -> String {
+        match &self.ear_verification_key.algorithm {
+            Some(alg) => match alg {
+                jsonwebkey::Algorithm::ES256 => String::from("ES256"),
+                jsonwebkey::Algorithm::HS256 => String::from("HS256"),
+                jsonwebkey::Algorithm::RS256 => String::from("RS256"),
+            },
+            None => String::from(""),
+        }
+    }
+}
+
+pub struct Discovery {
+    provisioning_url: url::Url,
+    verification_url: url::Url,
+    http_client: reqwest::blocking::Client,
+}
+
+impl Discovery {
+    pub fn from_base_url(base_url_str: String) -> Result<Discovery, Error> {
+        let base_url =
+            url::Url::parse(&base_url_str).map_err(|e| Error::ConfigError(e.to_string()))?;
+
+        let mut provisioning_url = base_url.clone();
+        provisioning_url.set_path(".well-known/veraison/provisioning");
+
+        let mut verification_url = base_url.clone();
+        verification_url.set_path(".well-known/veraison/verification");
+
+        Ok(Discovery {
+            provisioning_url: provisioning_url,
+            verification_url: verification_url,
+            http_client: reqwest::blocking::Client::builder().build()?,
+        })
+    }
+
+    pub fn get_verification_api(&self) -> Result<VerificationApi, Error> {
+        let response = self
+            .http_client
+            .get(self.verification_url.as_str())
+            .header(reqwest::header::ACCEPT, DISCOVERY_MEDIA_TYPE)
+            .send()?;
+
+        match response.status() {
+            reqwest::StatusCode::OK => Ok(response.json::<VerificationApi>()?),
+            _ => Err(Error::ApiError(String::from(
+                "Failed to discover verification endpoint information.",
+            ))),
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
