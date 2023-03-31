@@ -5,7 +5,9 @@ use std::ffi::{c_void, CStr, CString};
 
 use core::slice;
 
-use veraison_apiclient::{ChallengeResponse, ChallengeResponseBuilder, Discovery, Error, Nonce};
+use veraison_apiclient::{
+    ChallengeResponse, ChallengeResponseBuilder, Discovery, Error, Nonce, ServiceState,
+};
 
 /// This structure represents an active challenge-response API session.
 ///
@@ -97,6 +99,16 @@ pub enum VeraisonResult {
     DataConversionError,
 }
 
+/// C-compatible enum representation of the enumeration of service states.
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum VeraisonServiceState {
+    VeraisonServiceStateDown = 0,
+    VeraisonServiceStateInitializing,
+    VeraisonServiceStateReady,
+    VeraisonServiceStateTerminating,
+}
+
 /// This structure describes the characteristics of the Veraison verification API.
 ///
 /// An instance of this structure can be obtained from the [`veraison_get_verification_api`] function,
@@ -107,6 +119,29 @@ pub struct VeraisonVerificationApi {
     public_key_der: *const u8,
     public_key_pem: *const libc::c_char,
     algorithm: *const libc::c_char,
+
+    /// The number of accepted media types for evidence verification.
+    media_type_count: libc::size_t,
+
+    /// An array of NUL-terminated strings specifying the accepted media types. Each string will be
+    /// a valid IANA media type string according to [RFC6838](https://www.rfc-editor.org/rfc/rfc6838.html).
+    /// An example would be `application/psa-attestation-token`.
+    ///
+    /// C client code must not dereference or use this pointer value in any way if the
+    /// [`VeraisonVerificationApi::media_type_count`] field is zero. This would mean that the API
+    /// endpoint does not support any media types.
+    media_type_list: *const *const libc::c_char,
+
+    /// The current operational state of the service. This field indicates whether the given verification
+    /// endpoints are available to accept requests.
+    service_state: VeraisonServiceState,
+
+    /// A non-NULL pointer to a NUL-terminated string indicating the current version of the service endpoint
+    /// being described.
+    version: *const libc::c_char,
+
+    /// This field is a reserved pointer to Rust-managed data and must not be used by C client
+    /// code.
     verification_api_wrapper: *mut c_void,
 }
 
@@ -130,6 +165,9 @@ struct ShimVerificationApi {
     public_key_der_vec: Vec<u8>,
     public_key_pem_cstring: CString,
     algorithm_cstring: CString,
+    media_type_cstring_vec: Vec<CString>,
+    media_type_ptr_vec: Vec<*const libc::c_char>,
+    version_cstring: CString,
 }
 
 /// Establish a new challenge-response API session with the server at the given
@@ -436,10 +474,33 @@ pub unsafe extern "C" fn veraison_get_verification_api(
 
     let algorithm = verification_api.ear_verification_algorithm();
 
-    let shim = ShimVerificationApi {
+    let media_types = verification_api.media_types().to_vec();
+
+    // Map the Rust Strings to CString objects for the accept types.
+    let media_type_cstrings = media_types
+        .iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect();
+
+    let mut shim = ShimVerificationApi {
         public_key_der_vec: public_key_der_vec,
         public_key_pem_cstring: CString::new(public_key_pem).unwrap(),
         algorithm_cstring: CString::new(algorithm).unwrap(),
+        media_type_cstring_vec: media_type_cstrings,
+        media_type_ptr_vec: Vec::with_capacity(media_types.len()),
+        version_cstring: CString::new(verification_api.version()).unwrap(),
+    };
+
+    // Get the ptr (char*) for each CString and also store that in a Rust-managed Vec.
+    for s in &shim.media_type_cstring_vec {
+        shim.media_type_ptr_vec.push(s.as_ptr())
+    }
+
+    let service_state = match verification_api.service_state() {
+        ServiceState::Down => VeraisonServiceState::VeraisonServiceStateDown,
+        ServiceState::Initializing => VeraisonServiceState::VeraisonServiceStateInitializing,
+        ServiceState::Ready => VeraisonServiceState::VeraisonServiceStateReady,
+        ServiceState::Terminating => VeraisonServiceState::VeraisonServiceStateTerminating,
     };
 
     let api = VeraisonVerificationApi {
@@ -447,6 +508,10 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         public_key_der: shim.public_key_der_vec.as_ptr(),
         public_key_pem: shim.public_key_pem_cstring.as_ptr(),
         algorithm: shim.algorithm_cstring.as_ptr(),
+        media_type_count: shim.media_type_ptr_vec.len(),
+        media_type_list: shim.media_type_ptr_vec.as_ptr(),
+        version: shim.version_cstring.as_ptr(),
+        service_state: service_state,
         verification_api_wrapper: Box::into_raw(Box::new(shim)) as *mut c_void,
     };
 
@@ -606,7 +671,12 @@ mod tests {
 
         // Call as if from C
         let result = unsafe {
-            open_challenge_response_session(new_session_uri.as_ptr(), 32, std::ptr::null(), &mut session)
+            open_challenge_response_session(
+                new_session_uri.as_ptr(),
+                32,
+                std::ptr::null(),
+                &mut session,
+            )
         };
 
         // We should have an Ok result
