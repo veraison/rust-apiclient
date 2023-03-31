@@ -135,8 +135,8 @@ struct ShimVerificationApi {
 /// Establish a new challenge-response API session with the server at the given
 /// base URL, using the supplied nonce configuration.
 ///
-/// The base URL needs to be the URL of a challenge-response API endpoint, such as
-/// `http://veraison.example.com/challenge-response/v1/`.
+/// The URL needs to be the URL of a challenge-response API endpoint, such as
+/// `http://veraison.example.com/challenge-response/v1/newSession`.
 ///
 /// There are two valid nonce configurations. If the client wishes to specify
 /// the nonce bytes, then it should allocate a memory buffer of the required
@@ -180,14 +180,14 @@ struct ShimVerificationApi {
 /// not a null pointer.
 #[no_mangle]
 pub unsafe extern "C" fn open_challenge_response_session(
-    base_url: *const libc::c_char,
+    new_session_url: *const libc::c_char,
     nonce_size: libc::size_t,
     nonce: *const u8,
     out_session: *mut *mut ChallengeResponseSession,
 ) -> VeraisonResult {
     // We have to trust the caller's char* ptr.
     let url_str: &str = {
-        let url_cstr = CStr::from_ptr(base_url);
+        let url_cstr = CStr::from_ptr(new_session_url);
         url_cstr.to_str().unwrap()
     };
 
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn open_challenge_response_session(
 
     // Establish the client session.
     let cr = ChallengeResponseBuilder::new()
-        .with_base_url(String::from(url_str))
+        .with_new_session_url(String::from(url_str))
         .build();
 
     // Early return on error. The idiom here is slightly odd, and it arguably would be better to use
@@ -602,11 +602,11 @@ mod tests {
 
         let mut session: *mut ChallengeResponseSession = std::ptr::null_mut();
 
-        let base_uri = CString::new(mock_server.uri()).unwrap();
+        let new_session_uri = CString::new(mock_server.uri() + "/newSession").unwrap();
 
         // Call as if from C
         let result = unsafe {
-            open_challenge_response_session(base_uri.as_ptr(), 32, std::ptr::null(), &mut session)
+            open_challenge_response_session(new_session_uri.as_ptr(), 32, std::ptr::null(), &mut session)
         };
 
         // We should have an Ok result
