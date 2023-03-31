@@ -109,6 +109,22 @@ pub enum VeraisonServiceState {
     VeraisonServiceStateTerminating,
 }
 
+/// Describes a single entry in the API endpoint list - a simple key/value pair, where the key is
+/// the endpoint name, and the value is the relative URL path.
+///
+/// The [`VeraisonVerificationApi`] structure holds a list of these tuples. It can be used to look-up
+/// the relative URL path of a specific API method.
+#[repr(C)]
+pub struct VeraisonApiEndpoint {
+    /// A non-NULL pointer to a NUL-terminated C string giving the name of the endpoint, such as
+    /// "newChallengeResponseSession".
+    name: *const libc::c_char,
+
+    /// A non-NULL pointer to a NUL-terminated C string giving the path, relative to the service base
+    /// URL, of the endpoint, such as "/challenge-response/v1/newSession".
+    path: *const libc::c_char,
+}
+
 /// This structure describes the characteristics of the Veraison verification API.
 ///
 /// An instance of this structure can be obtained from the [`veraison_get_verification_api`] function,
@@ -140,6 +156,11 @@ pub struct VeraisonVerificationApi {
     /// being described.
     version: *const libc::c_char,
 
+    /// The number of entries in the endpoint list.
+    endpoint_count: libc::size_t,
+
+    endpoint_list: *const VeraisonApiEndpoint,
+
     /// This field is a reserved pointer to Rust-managed data and must not be used by C client
     /// code.
     verification_api_wrapper: *mut c_void,
@@ -167,6 +188,8 @@ struct ShimVerificationApi {
     algorithm_cstring: CString,
     media_type_cstring_vec: Vec<CString>,
     media_type_ptr_vec: Vec<*const libc::c_char>,
+    endpoint_cstring_vec: Vec<(CString, CString)>,
+    endpoint_vec: Vec<VeraisonApiEndpoint>,
     version_cstring: CString,
 }
 
@@ -482,18 +505,38 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         .map(|s| CString::new(s.as_str()).unwrap())
         .collect();
 
+    // Get all of the mappings and create pairs of C-strings for those as well.
+    let all_endpoints = verification_api.get_all_api_endpoints();
+
+    let endpoint_cstrings: Vec<(CString, CString)> = all_endpoints
+        .iter()
+        .map(|(name, path)| {
+            (
+                CString::new(name.as_str()).unwrap(),
+                CString::new(path.as_str()).unwrap(),
+            )
+        })
+        .collect();
+
     let mut shim = ShimVerificationApi {
         public_key_der_vec: public_key_der_vec,
         public_key_pem_cstring: CString::new(public_key_pem).unwrap(),
         algorithm_cstring: CString::new(algorithm).unwrap(),
         media_type_cstring_vec: media_type_cstrings,
         media_type_ptr_vec: Vec::with_capacity(media_types.len()),
+        endpoint_cstring_vec: endpoint_cstrings,
+        endpoint_vec: Vec::with_capacity(all_endpoints.len()),
         version_cstring: CString::new(verification_api.version()).unwrap(),
     };
 
     // Get the ptr (char*) for each CString and also store that in a Rust-managed Vec.
     for s in &shim.media_type_cstring_vec {
         shim.media_type_ptr_vec.push(s.as_ptr())
+    }
+
+    // Now a similar operation for the endpoints, but this time each entry is a C-string pair.
+    for (k, v) in &shim.endpoint_cstring_vec {
+        shim.endpoint_vec.push(VeraisonApiEndpoint { name: k.as_ptr(), path: v.as_ptr() })
     }
 
     let service_state = match verification_api.service_state() {
@@ -512,6 +555,8 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         media_type_list: shim.media_type_ptr_vec.as_ptr(),
         version: shim.version_cstring.as_ptr(),
         service_state: service_state,
+        endpoint_count: shim.endpoint_vec.len(),
+        endpoint_list: shim.endpoint_vec.as_ptr(),
         verification_api_wrapper: Box::into_raw(Box::new(shim)) as *mut c_void,
     };
 

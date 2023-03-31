@@ -369,6 +369,13 @@ impl VerificationApi {
     pub fn get_api_endpoint(&self, endpoint_name: &str) -> Option<String> {
         self.api_endpoints.get(endpoint_name).cloned()
     }
+
+    pub fn get_all_api_endpoints(&self) -> Vec<(String, String)> {
+        self.api_endpoints
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
 }
 
 pub struct Discovery {
