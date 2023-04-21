@@ -161,6 +161,14 @@ pub struct VeraisonVerificationApi {
 
     endpoint_list: *const VeraisonApiEndpoint,
 
+    /// A pointer to a NUL-terminated text string containing a logging/error message from the most
+    /// recent operation.
+    ///
+    /// This pointer can be NULL when operations succeed or otherwise do not issue any logging
+    /// or error messages. Always check for NULL before dereferencing this pointer. Non-NULL pointers
+    /// are always valid pointers to NUL-terminated strings.
+    message: *const libc::c_char,
+
     /// This field is a reserved pointer to Rust-managed data and must not be used by C client
     /// code.
     verification_api_wrapper: *mut c_void,
@@ -191,6 +199,7 @@ struct ShimVerificationApi {
     endpoint_cstring_vec: Vec<(CString, CString)>,
     endpoint_vec: Vec<VeraisonApiEndpoint>,
     version_cstring: CString,
+    message_cstring: CString,
 }
 
 /// Establish a new challenge-response API session with the server at the given
@@ -479,21 +488,54 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         url_cstr.to_str().unwrap()
     };
 
-    let discovery = Discovery::from_base_url(String::from(url_str));
+    let api = safe_get_verification_api(url_str);
 
-    let discovery = discovery.unwrap();
+    match api {
+        Ok(_) => {}
+        Err(e) => return stub_verification_api_from_error(&e, out_api),
+    }
 
-    let verification_api = discovery.get_verification_api();
+    let api = api.unwrap();
 
-    let verification_api = verification_api.unwrap();
+    let api_ptr = Box::into_raw(Box::new(api));
+    *out_api = api_ptr;
 
-    let public_key_der_vec = verification_api.ear_verification_key_as_der();
+    VeraisonResult::Ok
+}
 
-    let public_key_der_vec = public_key_der_vec.unwrap();
+/// Completely dispose of all client-side memory and resources associated with the given
+/// verification API description.
+///
+/// Upon exit from this function, the given pointer should be assumed no longer valid.
+///
+/// Note: This is a client-side operation only. It takes no action on the verification service.
+/// This function only exists so that client-side memory shared between Rust and C can be
+/// safely freed.
+///
+/// # Safety
+/// The caller must guarantee that the `verification_api` pointer is a non-NULL pointer to a valid session
+/// that was previously output from a call to [`veraison_get_verification_api()`].
+#[no_mangle]
+pub unsafe extern "C" fn veraison_free_verification_api(
+    verification_api: *mut VeraisonVerificationApi,
+) {
+    // Just re-box the object and let Rust drop it automatically.
+    let raw_api = Box::from_raw(verification_api);
+    let _ = Box::from_raw(raw_api.verification_api_wrapper as *mut ShimVerificationApi);
+}
 
-    let public_key_pem = verification_api.ear_verification_key_as_pem();
+// Helper function to do most of the work of the public C function
+// veraison_get_verification_api.
+// This returns proper Rust errors, meanings that it can be coded using Rust-style error handling,
+// which helps with the several potential fail points in this flow.
+fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, Error> {
+    let discovery = Discovery::from_base_url(String::from(base_url))?;
 
-    let public_key_pem = public_key_pem.unwrap();
+    let verification_api = discovery.get_verification_api()?;
+
+    let public_key_der_vec = verification_api.ear_verification_key_as_der()?;
+
+    let public_key_pem = verification_api.ear_verification_key_as_pem()?;
 
     let algorithm = verification_api.ear_verification_algorithm();
 
@@ -527,6 +569,7 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         endpoint_cstring_vec: endpoint_cstrings,
         endpoint_vec: Vec::with_capacity(all_endpoints.len()),
         version_cstring: CString::new(verification_api.version()).unwrap(),
+        message_cstring: CString::new("").unwrap(),
     };
 
     // Get the ptr (char*) for each CString and also store that in a Rust-managed Vec.
@@ -560,34 +603,11 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         service_state: service_state,
         endpoint_count: shim.endpoint_vec.len(),
         endpoint_list: shim.endpoint_vec.as_ptr(),
+        message: shim.message_cstring.as_ptr(),
         verification_api_wrapper: Box::into_raw(Box::new(shim)) as *mut c_void,
     };
 
-    let api_ptr = Box::into_raw(Box::new(api));
-    *out_api = api_ptr;
-
-    VeraisonResult::Ok
-}
-
-/// Completely dispose of all client-side memory and resources associated with the given
-/// verification API description.
-///
-/// Upon exit from this function, the given pointer should be assumed no longer valid.
-///
-/// Note: This is a client-side operation only. It takes no action on the verification service.
-/// This function only exists so that client-side memory shared between Rust and C can be
-/// safely freed.
-///
-/// # Safety
-/// The caller must guarantee that the `verification_api` pointer is a non-NULL pointer to a valid session
-/// that was previously output from a call to [`veraison_get_verification_api()`].
-#[no_mangle]
-pub unsafe extern "C" fn veraison_free_verification_api(
-    verification_api: *mut VeraisonVerificationApi,
-) {
-    // Just re-box the object and let Rust drop it automatically.
-    let raw_api = Box::from_raw(verification_api);
-    let _ = Box::from_raw(raw_api.verification_api_wrapper as *mut ShimVerificationApi);
+    Ok(api)
 }
 
 // This function is used when there is an error while attempting to create the session - either because the
@@ -632,6 +652,58 @@ fn stub_session_from_error(
     // we do Box::from_raw() to bring the memory back under Rust management.
     let session_ptr = Box::into_raw(raw_shim_session);
     unsafe { *out_session = session_ptr };
+
+    returncode
+}
+
+// This function is used when there is an error while trying to discover the verification API.
+// It creates and outputs a degenerate VeraisonVerificationApi whose fields are safely-stubbed
+// empty values, but preserves any error message so that it can be passed back to C world. It
+// also computes and returns the correct VeraisonResult value.
+fn stub_verification_api_from_error(
+    e: &Error,
+    out_verification_api: *mut *mut VeraisonVerificationApi,
+) -> VeraisonResult {
+    // Get the error code and message by matching on the error type
+    let (returncode, message) = translate_error(e);
+
+    // Create a degenerate/stub api object to represent the failure to discover it. Most
+    // values are none/empty degnerate (but safe) placeholders.
+    let shim = ShimVerificationApi {
+        public_key_der_vec: Vec::new(),
+        public_key_pem_cstring: CString::new("").unwrap(),
+        algorithm_cstring: CString::new("").unwrap(),
+        media_type_cstring_vec: Vec::new(),
+        media_type_ptr_vec: Vec::new(),
+        endpoint_cstring_vec: Vec::new(),
+        endpoint_vec: Vec::new(),
+        version_cstring: CString::new("").unwrap(),
+        // Preserve the message - the only meaningful field in this code path
+        message_cstring: message,
+    };
+
+    // Wrap to C-compatible structure
+    let raw = Box::new(VeraisonVerificationApi {
+        public_key_der_size: shim.public_key_der_vec.len(),
+        public_key_der: shim.public_key_der_vec.as_ptr(),
+        public_key_pem: shim.public_key_pem_cstring.as_ptr(),
+        algorithm: shim.algorithm_cstring.as_ptr(),
+        media_type_count: shim.media_type_ptr_vec.len(),
+        media_type_list: shim.media_type_ptr_vec.as_ptr(),
+        version: shim.version_cstring.as_ptr(),
+        service_state: VeraisonServiceState::VeraisonServiceStateDown,
+        endpoint_count: shim.endpoint_vec.len(),
+        endpoint_list: shim.endpoint_vec.as_ptr(),
+        message: shim.message_cstring.as_ptr(),
+        verification_api_wrapper: Box::into_raw(Box::new(shim)) as *mut c_void,
+    });
+
+    // Finally, use Box::into_raw() again for the raw api, so that Rust doesn't dispose it when it
+    // drops out of scope.
+    // C world will pass this pointer back to us in veraison_free_verification_api(), at which point
+    // we do Box::from_raw() to bring the memory back under Rust management.
+    let api_ptr = Box::into_raw(raw);
+    unsafe { *out_verification_api = api_ptr };
 
     returncode
 }
