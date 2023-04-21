@@ -131,9 +131,18 @@ pub struct VeraisonApiEndpoint {
 /// and must be freed by a corresponding call to [`veraison_free_verification_api`].
 #[repr(C)]
 pub struct VeraisonVerificationApi {
+    // The size, in bytes, of the public key's ASN.1 DER encoding.
     public_key_der_size: libc::size_t,
+
+    // A non-NULL pointer to the public key as an ASN.1 DER encoding.
     public_key_der: *const u8,
+
+    // A non-NULL pointer to a NUL-terminated string, providing the public key in
+    // PEM format.
     public_key_pem: *const libc::c_char,
+
+    // A non-NULL pointer to a NUL-terminated string providing the algorithmic scheme
+    // for the EAR signature, such as "ES256".
     algorithm: *const libc::c_char,
 
     /// The number of accepted media types for evidence verification.

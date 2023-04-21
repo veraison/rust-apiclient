@@ -329,6 +329,7 @@ pub struct VerificationApi {
 }
 
 impl VerificationApi {
+    /// Obtains the EAR verification public key encoded in ASN.1 DER format.
     pub fn ear_verification_key_as_der(&self) -> Result<Vec<u8>, Error> {
         let key = &self.ear_verification_key.key;
         (*key)
@@ -336,6 +337,7 @@ impl VerificationApi {
             .map_err(|e| Error::DataConversionError(e.to_string()))
     }
 
+    /// Obtains the EAR verification public key encoded in PEM format.
     pub fn ear_verification_key_as_pem(&self) -> Result<String, Error> {
         let key = &self.ear_verification_key.key;
         (*key)
@@ -343,6 +345,7 @@ impl VerificationApi {
             .map_err(|e| Error::DataConversionError(e.to_string()))
     }
 
+    /// Obtains the signature algorithm scheme used with the EAR.
     pub fn ear_verification_algorithm(&self) -> String {
         match &self.ear_verification_key.algorithm {
             Some(alg) => match alg {
@@ -354,22 +357,37 @@ impl VerificationApi {
         }
     }
 
+    /// Obtains the strings for the set of media types that are supported for evidence
+    /// verification. Each member of the array will be a media type string such as
+    /// `"application/eat-cwt; profile=http://arm.com/psa/2.0.0"`.
     pub fn media_types(&self) -> &[String] {
         self.media_types.as_ref()
     }
 
+    /// Obtains the version of the service.
     pub fn version(&self) -> &str {
         self.version.as_ref()
     }
 
+    /// Indicates whether the service is starting, ready, terminating or down.
     pub fn service_state(&self) -> &ServiceState {
         &self.service_state
     }
 
+    /// Gets the API endpoint associated with a specific endpoint name.
+    ///
+    /// Returns `None` if there is no API endpoint with the given name, otherwise returns
+    /// a relative URL such as `"/challenge-response/v1/newSession"`.
     pub fn get_api_endpoint(&self, endpoint_name: &str) -> Option<String> {
         self.api_endpoints.get(endpoint_name).cloned()
     }
 
+    /// Gets all of the API endpoints published by this verification service as a vector of
+    /// string pairs.
+    ///
+    /// For each endpoint entry, the first member of the pair is the endpoint name, such
+    /// as `"newChallengeResponseSession"`, and the second member is the corresponding
+    /// relative URL, such as `"/challenge-response/v1/newSession"`.
     pub fn get_all_api_endpoints(&self) -> Vec<(String, String)> {
         self.api_endpoints
             .iter()
@@ -378,6 +396,11 @@ impl VerificationApi {
     }
 }
 
+/// This structure allows Veraison endpoints and service capabilities to be discovered
+/// dynamically.
+///
+/// Use [`Discovery::from_base_url()`] to create an instance of this structure for the
+/// Veraison service instance that you are communicating with.
 pub struct Discovery {
     provisioning_url: url::Url, //TODO: The provisioning URL discovery is not implemented yet.
     verification_url: url::Url,
@@ -385,6 +408,8 @@ pub struct Discovery {
 }
 
 impl Discovery {
+    /// Establishes client API discovery for the Veraison service instance running at the
+    /// given base URL.
     pub fn from_base_url(base_url_str: String) -> Result<Discovery, Error> {
         let base_url =
             url::Url::parse(&base_url_str).map_err(|e| Error::ConfigError(e.to_string()))?;
@@ -402,6 +427,7 @@ impl Discovery {
         })
     }
 
+    /// Obtains the capabilities and endpoints of the Veraison verification service.
     pub fn get_verification_api(&self) -> Result<VerificationApi, Error> {
         let response = self
             .http_client
