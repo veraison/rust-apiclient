@@ -536,7 +536,10 @@ pub unsafe extern "C" fn veraison_get_verification_api(
 
     // Now a similar operation for the endpoints, but this time each entry is a C-string pair.
     for (k, v) in &shim.endpoint_cstring_vec {
-        shim.endpoint_vec.push(VeraisonApiEndpoint { name: k.as_ptr(), path: v.as_ptr() })
+        shim.endpoint_vec.push(VeraisonApiEndpoint {
+            name: k.as_ptr(),
+            path: v.as_ptr(),
+        })
     }
 
     let service_state = match verification_api.service_state() {
@@ -662,6 +665,71 @@ mod tests {
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[async_std::test]
+    async fn ffi_discover_verification_ok() {
+        let mock_server = MockServer::start().await;
+
+        // Sample response crafted from Veraison docs.
+        let raw_response = r#"
+        {
+            "ear-verification-key": {
+                "crv": "P-256",
+                "kty": "EC",
+                "x": "usWxHK2PmfnHKwXPS54m0kTcGJ90UiglWiGahtagnv8",
+                "y": "IBOL-C3BttVivg-lSreASjpkttcsz-1rb7btKLv8EX4",
+                "alg": "ES256"
+            },
+            "media-types": [
+                "application/eat-cwt; profile=http://arm.com/psa/2.0.0",
+                "application/pem-certificate-chain",
+                "application/vnd.enacttrust.tpm-evidence",
+                "application/eat-collection; profile=http://arm.com/CCA-SSD/1.0.0",
+                "application/psa-attestation-token"
+            ],
+            "version": "commit-cb11fa0",
+            "service-state": "READY",
+            "api-endpoints": {
+                "newChallengeResponseSession": "/challenge-response/v1/newSession"
+            }
+        }"#;
+
+        let response = ResponseTemplate::new(200)
+            .set_body_raw(raw_response, "application/vnd.veraison.discovery+json");
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/veraison/verification"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let mut verification_api: *mut VeraisonVerificationApi = std::ptr::null_mut();
+
+        let base_url = CString::new(mock_server.uri()).unwrap();
+
+        // Call as if from C
+        let result =
+            unsafe { veraison_get_verification_api(base_url.as_ptr(), &mut verification_api) };
+
+        // We should have an Ok result
+        assert_eq!(result, VeraisonResult::Ok);
+
+        // Sanity-check results - this is not a deep check, but the C example program is
+        // better placed to do that. Just make sure we are getting the correct counts, sizes
+        // and non-NULL buffers.
+        unsafe {
+            assert_ne!((*verification_api).public_key_der_size, 0);
+            assert_ne!((*verification_api).public_key_der, std::ptr::null());
+            assert_ne!((*verification_api).public_key_pem, std::ptr::null());
+            assert_eq!((*verification_api).media_type_count, 5);
+            assert_ne!((*verification_api).media_type_list, std::ptr::null());
+            assert_eq!((*verification_api).endpoint_count, 1);
+            assert_ne!((*verification_api).endpoint_list, std::ptr::null());
+        };
+
+        // Dispose
+        unsafe { veraison_free_verification_api(verification_api) }
+    }
 
     #[async_std::test]
     async fn ffi_challenge_response_session_ok() {
