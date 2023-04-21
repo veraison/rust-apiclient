@@ -417,12 +417,12 @@ impl Discovery {
         let mut provisioning_url = base_url.clone();
         provisioning_url.set_path(".well-known/veraison/provisioning");
 
-        let mut verification_url = base_url.clone();
+        let mut verification_url = base_url;
         verification_url.set_path(".well-known/veraison/verification");
 
         Ok(Discovery {
-            provisioning_url: provisioning_url,
-            verification_url: verification_url,
+            provisioning_url,
+            verification_url,
             http_client: reqwest::blocking::Client::builder().build()?,
         })
     }

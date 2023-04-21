@@ -570,7 +570,7 @@ fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, 
         .collect();
 
     let mut shim = ShimVerificationApi {
-        public_key_der_vec: public_key_der_vec,
+        public_key_der_vec,
         public_key_pem_cstring: CString::new(public_key_pem).unwrap(),
         algorithm_cstring: CString::new(algorithm).unwrap(),
         media_type_cstring_vec: media_type_cstrings,
@@ -609,7 +609,7 @@ fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, 
         media_type_count: shim.media_type_ptr_vec.len(),
         media_type_list: shim.media_type_ptr_vec.as_ptr(),
         version: shim.version_cstring.as_ptr(),
-        service_state: service_state,
+        service_state,
         endpoint_count: shim.endpoint_vec.len(),
         endpoint_list: shim.endpoint_vec.as_ptr(),
         message: shim.message_cstring.as_ptr(),
