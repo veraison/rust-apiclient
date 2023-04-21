@@ -499,9 +499,8 @@ pub unsafe extern "C" fn veraison_get_verification_api(
 
     let api = safe_get_verification_api(url_str);
 
-    match api {
-        Ok(_) => {}
-        Err(e) => return stub_verification_api_from_error(&e, out_api),
+    if let Err(e) = api {
+        return stub_verification_api_from_error(&e, out_api);
     }
 
     let api = api.unwrap();
