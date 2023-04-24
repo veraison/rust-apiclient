@@ -11,6 +11,8 @@ pub enum Error {
     CallbackError(String),
     #[error("feature not implemented: {0}")]
     NotImplementedError(String),
+    #[error("Data conversion error: {0}")]
+    DataConversionError(String),
 }
 
 // While for other error sources the mapping may be more subtle, all reqwest
@@ -21,13 +23,20 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+impl From<jsonwebkey::ConversionError> for Error {
+    fn from(e: jsonwebkey::ConversionError) -> Self {
+        Error::DataConversionError(e.to_string())
+    }
+}
+
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::NotImplementedError(e)
             | Error::ConfigError(e)
             | Error::ApiError(e)
-            | Error::CallbackError(e) => {
+            | Error::CallbackError(e)
+            | Error::DataConversionError(e) => {
                 write!(f, "{}", e)
             }
         }
@@ -42,32 +51,34 @@ type EvidenceCreationCb = fn(nonce: &[u8], accepted: &[String]) -> Result<(Vec<u
 
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
-    base_url: Option<String>,
+    new_session_url: Option<String>,
     // TODO(tho) add TLS config / authn tokens etc.
 }
 
 impl ChallengeResponseBuilder {
     /// default constructor
     pub fn new() -> Self {
-        Self { base_url: None }
+        Self {
+            new_session_url: None,
+        }
     }
 
-    /// Use this method to supply the base URL of the service implementing the
-    /// challenge-response API.  E.g.,
-    /// "https://veraison.example/challenge-response/v1/".
-    pub fn with_base_url(mut self, v: String) -> ChallengeResponseBuilder {
-        self.base_url = Some(v);
+    /// Use this method to supply the URL of the verification endpoint that will create
+    /// new challenge-response sessions, e.g.
+    /// "https://veraison.example/challenge-response/v1/newSession".
+    pub fn with_new_session_url(mut self, v: String) -> ChallengeResponseBuilder {
+        self.new_session_url = Some(v);
         self
     }
 
     /// Instantiate a valid ChallengeResponse object, or fail with an error.
     pub fn build(self) -> Result<ChallengeResponse, Error> {
-        let base_url_str = self
-            .base_url
+        let new_session_url_str = self
+            .new_session_url
             .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
 
         Ok(ChallengeResponse {
-            base_url: url::Url::parse(&base_url_str)
+            new_session_url: url::Url::parse(&new_session_url_str)
                 .map_err(|e| Error::ConfigError(e.to_string()))?,
             http_client: reqwest::blocking::Client::builder().build()?,
         })
@@ -83,7 +94,7 @@ impl Default for ChallengeResponseBuilder {
 /// The object on which one or more challenge-response verification sessions can
 /// be run.  Always use the [ChallengeResponseBuilder] to instantiate it.
 pub struct ChallengeResponse {
-    base_url: url::Url,
+    new_session_url: url::Url,
     http_client: reqwest::blocking::Client,
 }
 
@@ -237,11 +248,7 @@ impl ChallengeResponse {
     }
 
     fn new_session_request_url(&self, nonce: &Nonce) -> Result<url::Url, Error> {
-        let base = &self.base_url;
-
-        let mut new_session_url = base
-            .join("newSession")
-            .map_err(|e| Error::ConfigError(e.to_string()))?;
+        let mut new_session_url = self.new_session_url.clone();
 
         let mut q_params = String::new();
 
@@ -264,6 +271,7 @@ impl ChallengeResponse {
 }
 
 const CRS_MEDIA_TYPE: &str = "application/vnd.veraison.challenge-response-session+json";
+const DISCOVERY_MEDIA_TYPE: &str = "application/vnd.veraison.discovery+json";
 
 #[serde_with::serde_as]
 #[serde_with::skip_serializing_none]
@@ -297,6 +305,145 @@ pub struct EvidenceBlob {
     value: Vec<u8>,
 }
 
+/// Enumerates the four possible states that the service can be in.
+#[derive(Debug, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ServiceState {
+    Down,
+    Initializing,
+    Ready,
+    Terminating,
+}
+
+/// This object models the state and capabilities of the verification API in the Veraison service.
+///
+/// An instance of this struct is returned from [`Discovery::get_verification_api()`].
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct VerificationApi {
+    ear_verification_key: jsonwebkey::JsonWebKey,
+    media_types: Vec<String>,
+    version: String,
+    service_state: ServiceState,
+    api_endpoints: std::collections::HashMap<String, String>,
+}
+
+impl VerificationApi {
+    /// Obtains the EAR verification public key encoded in ASN.1 DER format.
+    pub fn ear_verification_key_as_der(&self) -> Result<Vec<u8>, Error> {
+        let key = &self.ear_verification_key.key;
+        (*key)
+            .try_to_der()
+            .map_err(|e| Error::DataConversionError(e.to_string()))
+    }
+
+    /// Obtains the EAR verification public key encoded in PEM format.
+    pub fn ear_verification_key_as_pem(&self) -> Result<String, Error> {
+        let key = &self.ear_verification_key.key;
+        (*key)
+            .try_to_pem()
+            .map_err(|e| Error::DataConversionError(e.to_string()))
+    }
+
+    /// Obtains the signature algorithm scheme used with the EAR.
+    pub fn ear_verification_algorithm(&self) -> String {
+        match &self.ear_verification_key.algorithm {
+            Some(alg) => match alg {
+                jsonwebkey::Algorithm::ES256 => String::from("ES256"),
+                jsonwebkey::Algorithm::HS256 => String::from("HS256"),
+                jsonwebkey::Algorithm::RS256 => String::from("RS256"),
+            },
+            None => String::from(""),
+        }
+    }
+
+    /// Obtains the strings for the set of media types that are supported for evidence
+    /// verification. Each member of the array will be a media type string such as
+    /// `"application/eat-cwt; profile=http://arm.com/psa/2.0.0"`.
+    pub fn media_types(&self) -> &[String] {
+        self.media_types.as_ref()
+    }
+
+    /// Obtains the version of the service.
+    pub fn version(&self) -> &str {
+        self.version.as_ref()
+    }
+
+    /// Indicates whether the service is starting, ready, terminating or down.
+    pub fn service_state(&self) -> &ServiceState {
+        &self.service_state
+    }
+
+    /// Gets the API endpoint associated with a specific endpoint name.
+    ///
+    /// Returns `None` if there is no API endpoint with the given name, otherwise returns
+    /// a relative URL such as `"/challenge-response/v1/newSession"`.
+    pub fn get_api_endpoint(&self, endpoint_name: &str) -> Option<String> {
+        self.api_endpoints.get(endpoint_name).cloned()
+    }
+
+    /// Gets all of the API endpoints published by this verification service as a vector of
+    /// string pairs.
+    ///
+    /// For each endpoint entry, the first member of the pair is the endpoint name, such
+    /// as `"newChallengeResponseSession"`, and the second member is the corresponding
+    /// relative URL, such as `"/challenge-response/v1/newSession"`.
+    pub fn get_all_api_endpoints(&self) -> Vec<(String, String)> {
+        self.api_endpoints
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+}
+
+/// This structure allows Veraison endpoints and service capabilities to be discovered
+/// dynamically.
+///
+/// Use [`Discovery::from_base_url()`] to create an instance of this structure for the
+/// Veraison service instance that you are communicating with.
+pub struct Discovery {
+    provisioning_url: url::Url, //TODO: The provisioning URL discovery is not implemented yet.
+    verification_url: url::Url,
+    http_client: reqwest::blocking::Client,
+}
+
+impl Discovery {
+    /// Establishes client API discovery for the Veraison service instance running at the
+    /// given base URL.
+    pub fn from_base_url(base_url_str: String) -> Result<Discovery, Error> {
+        let base_url =
+            url::Url::parse(&base_url_str).map_err(|e| Error::ConfigError(e.to_string()))?;
+
+        let mut provisioning_url = base_url.clone();
+        provisioning_url.set_path(".well-known/veraison/provisioning");
+
+        let mut verification_url = base_url;
+        verification_url.set_path(".well-known/veraison/verification");
+
+        Ok(Discovery {
+            provisioning_url,
+            verification_url,
+            http_client: reqwest::blocking::Client::builder().build()?,
+        })
+    }
+
+    /// Obtains the capabilities and endpoints of the Veraison verification service.
+    pub fn get_verification_api(&self) -> Result<VerificationApi, Error> {
+        let response = self
+            .http_client
+            .get(self.verification_url.as_str())
+            .header(reqwest::header::ACCEPT, DISCOVERY_MEDIA_TYPE)
+            .send()?;
+
+        match response.status() {
+            reqwest::StatusCode::OK => Ok(response.json::<VerificationApi>()?),
+            _ => Err(Error::ApiError(String::from(
+                "Failed to discover verification endpoint information.",
+            ))),
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct ProblemDetails {
     r#type: String,
@@ -311,28 +458,30 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    const TEST_BASE_URL_OK: &str = "https://veraison.example/challenge-response/v1/";
-    const TEST_BASE_URL_NOT_ABSOLUTE: &str = "/challenge-response/v1/";
+    const TEST_NEW_SESSION_URL_OK: &str =
+        "https://veraison.example/challenge-response/v1/newSession";
+    const TEST_NEW_SESSION_URL_NOT_ABSOLUTE: &str = "/challenge-response/v1/newSession";
 
     #[test]
     fn default_constructor() {
         let b: ChallengeResponseBuilder = Default::default();
 
         // expected initial state
-        assert!(b.base_url.is_none());
+        assert!(b.new_session_url.is_none());
     }
 
     #[test]
     fn build_ok() {
-        let b = ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_OK.to_string());
+        let b = ChallengeResponseBuilder::new()
+            .with_new_session_url(TEST_NEW_SESSION_URL_OK.to_string());
 
         assert!(b.build().is_ok());
     }
 
     #[test]
     fn build_fail_base_url_not_absolute() {
-        let b =
-            ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string());
+        let b = ChallengeResponseBuilder::new()
+            .with_new_session_url(TEST_NEW_SESSION_URL_NOT_ABSOLUTE.to_string());
 
         assert!(b.build().is_err());
     }
@@ -346,8 +495,8 @@ mod tests {
 
     #[test]
     fn build_fail_missing_evidence_creation_cb() {
-        let b =
-            ChallengeResponseBuilder::new().with_base_url(TEST_BASE_URL_NOT_ABSOLUTE.to_string());
+        let b = ChallengeResponseBuilder::new()
+            .with_new_session_url(TEST_NEW_SESSION_URL_NOT_ABSOLUTE.to_string());
 
         assert!(b.build().is_err());
     }
@@ -376,7 +525,7 @@ mod tests {
             .await;
 
         let cr = ChallengeResponseBuilder::new()
-            .with_base_url(mock_server.uri())
+            .with_new_session_url(mock_server.uri() + "/newSession")
             .build()
             .unwrap();
 
@@ -413,7 +562,7 @@ mod tests {
             .await;
 
         let cr = ChallengeResponseBuilder::new()
-            .with_base_url(mock_server.uri())
+            .with_new_session_url(mock_server.uri() + "/newSession")
             .build()
             .unwrap();
 
@@ -426,5 +575,82 @@ mod tests {
 
         // Expect we are given the expected attestation result
         assert_eq!(rv, attestation_result)
+    }
+
+    #[async_std::test]
+    async fn discover_verification_ok() {
+        let mock_server = MockServer::start().await;
+
+        // Sample response crafted from Veraison docs.
+        let raw_response = r#"
+        {
+            "ear-verification-key": {
+                "crv": "P-256",
+                "kty": "EC",
+                "x": "usWxHK2PmfnHKwXPS54m0kTcGJ90UiglWiGahtagnv8",
+                "y": "IBOL-C3BttVivg-lSreASjpkttcsz-1rb7btKLv8EX4",
+                "alg": "ES256"
+            },
+            "media-types": [
+                "application/eat-cwt; profile=http://arm.com/psa/2.0.0",
+                "application/pem-certificate-chain",
+                "application/vnd.enacttrust.tpm-evidence",
+                "application/eat-collection; profile=http://arm.com/CCA-SSD/1.0.0",
+                "application/psa-attestation-token"
+            ],
+            "version": "commit-cb11fa0",
+            "service-state": "READY",
+            "api-endpoints": {
+                "newChallengeResponseSession": "/challenge-response/v1/newSession"
+            }
+        }"#;
+
+        let response = ResponseTemplate::new(200)
+            .set_body_raw(raw_response, "application/vnd.veraison.discovery+json");
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/veraison/verification"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let discovery = Discovery::from_base_url(mock_server.uri())
+            .expect("Failed to create Discovery client.");
+
+        let verification_api = discovery
+            .get_verification_api()
+            .expect("Failed to get verification endpoint details.");
+
+        // Check that we've pulled and deserialized everything that we expect
+        assert_eq!(verification_api.service_state, ServiceState::Ready);
+        assert_eq!(verification_api.version, String::from("commit-cb11fa0"));
+        assert_eq!(verification_api.media_types.len(), 5);
+        assert_eq!(
+            verification_api.media_types[0],
+            String::from("application/eat-cwt; profile=http://arm.com/psa/2.0.0")
+        );
+        assert_eq!(
+            verification_api.media_types[1],
+            String::from("application/pem-certificate-chain")
+        );
+        assert_eq!(
+            verification_api.media_types[2],
+            String::from("application/vnd.enacttrust.tpm-evidence")
+        );
+        assert_eq!(
+            verification_api.media_types[3],
+            String::from("application/eat-collection; profile=http://arm.com/CCA-SSD/1.0.0")
+        );
+        assert_eq!(
+            verification_api.media_types[4],
+            String::from("application/psa-attestation-token")
+        );
+        assert_eq!(verification_api.api_endpoints.len(), 1);
+        assert_eq!(
+            verification_api
+                .api_endpoints
+                .get("newChallengeResponseSession"),
+            Some(&String::from("/challenge-response/v1/newSession"))
+        );
     }
 }

@@ -18,11 +18,24 @@ fn my_evidence_builder(nonce: &[u8], accept: &[String]) -> Result<(Vec<u8>, Stri
 }
 
 fn main() {
-    let api_endpoint = "http://127.0.0.1:8080/challenge-response/v1/".to_string();
+    let base_url = "http://127.0.0.1:8080";
+
+    let discovery = Discovery::from_base_url(String::from(base_url))
+        .expect("Failed to start API discovery with the service.");
+
+    let verification_api = discovery
+        .get_verification_api()
+        .expect("Failed to discover the verification endpoint details.");
+
+    let relative_endpoint = verification_api
+        .get_api_endpoint("newChallengeResponseSession")
+        .expect("Could not locate a newChallengeResponseSession endpoint.");
+
+    let api_endpoint = format!("{}{}", base_url, relative_endpoint);
 
     // create a ChallengeResponse object
     let cr = ChallengeResponseBuilder::new()
-        .with_base_url(api_endpoint)
+        .with_new_session_url(api_endpoint)
         .build()
         .unwrap();
 
