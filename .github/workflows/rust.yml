@@ -24,3 +24,22 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+  
+# Recommended pipeline if using advisories, to avoid sudden breakages
+# From: https://github.com/EmbarkStudios/cargo-deny-action
+  cargo-deny:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        checks:
+          - advisories
+          - bans licenses sources
+
+    # Prevent sudden announcement of a new advisory from failing ci:
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+
+    steps:
+    - uses: actions/checkout@v3
+    - uses: EmbarkStudios/cargo-deny-action@v1
+      with:
+        command: check ${{ matrix.checks }}
