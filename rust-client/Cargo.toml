@@ -17,7 +17,7 @@ url = { version = "2", features = ["serde"] }
 base64 = "0.13.0"
 thiserror = "1"
 serde = "1.0.144"
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
 jsonwebkey = { version = "0.3.5", features = ["pkcs-convert"] }
 
 [dependencies.serde_with]
