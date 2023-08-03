@@ -26,4 +26,4 @@ features = ["base64", "chrono"]
 
 [dev-dependencies]
 wiremock = "0.5"
-async-std = { version = "1.6.5", features = ["attributes"] }
+async-std = { version = "1.6.5", features = ["attributes", "tokio1"] }
