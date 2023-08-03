@@ -580,10 +580,10 @@ pub unsafe extern "C" fn veraison_free_verification_api(
 // veraison_get_verification_api.
 // This returns proper Rust errors, meanings that it can be coded using Rust-style error handling,
 // which helps with the several potential fail points in this flow.
-fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, Error> {
+async fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, Error> {
     let discovery = Discovery::from_base_url(String::from(base_url))?;
 
-    let verification_api = discovery.get_verification_api()?;
+    let verification_api = discovery.get_verification_api().await?;
 
     let public_key_der_vec = verification_api.ear_verification_key_as_der()?;
 
