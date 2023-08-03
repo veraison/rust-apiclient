@@ -47,7 +47,7 @@ impl std::fmt::Debug for Error {
 /// The application is passed the session nonce and the list of supported
 /// evidence media types and shall return the computed evidence together with
 /// the selected media type.
-type EvidenceCreationCb = fn(nonce: &[u8], accepted: &[String]) -> Result<(Vec<u8>, String), Error>;
+type EvidenceCreationCb = fn(nonce: &[u8], accepted: &[String], token: Vec<u8>) -> Result<(Vec<u8>, String), Error>;
 
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
@@ -114,12 +114,13 @@ impl ChallengeResponse {
         &self,
         nonce: Nonce,
         evidence_creation_cb: EvidenceCreationCb,
+        token: Vec<u8>,
     ) -> Result<String, Error> {
         // create new c/r verification session on the veraison side
         let (session_url, session) = self.new_session(&nonce)?;
 
         // invoke the user-provided evidence builder callback with per-session parameters
-        let (evidence, media_type) = (evidence_creation_cb)(session.nonce(), session.accept())?;
+        let (evidence, media_type) = (evidence_creation_cb)(session.nonce(), session.accept(), token)?;
 
         // send evidence for verification to the session endpoint
         let attestation_result = self.challenge_response(&evidence, &media_type, &session_url)?;
