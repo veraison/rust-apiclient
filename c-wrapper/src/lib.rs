@@ -87,6 +87,20 @@ pub struct ChallengeResponseSession {
     session_wrapper: *mut c_void,
 }
 
+impl ChallengeResponseSession {
+    pub fn get_attestation_result(&self) -> *const libc::c_char {
+        self.attestation_result
+    }
+
+    pub fn get_nonce(&self) -> *const u8 {
+        self.nonce
+    }
+
+    pub fn get_nonce_size(&self) -> libc::size_t {
+        self.nonce_size
+    }
+}
+
 /// C-compatible enum representation of the error enum from the Rust client.
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
@@ -123,6 +137,16 @@ pub struct VeraisonApiEndpoint {
     /// A non-NULL pointer to a NUL-terminated C string giving the path, relative to the service base
     /// URL, of the endpoint, such as "/challenge-response/v1/newSession".
     path: *const libc::c_char,
+}
+
+impl VeraisonApiEndpoint {
+    pub fn get_name(&self) -> *const libc::c_char {
+        self.name
+    }
+
+    pub fn get_path(&self) -> *const libc::c_char {
+        self.path
+    }
 }
 
 /// This structure describes the characteristics of the Veraison verification API.
@@ -181,6 +205,24 @@ pub struct VeraisonVerificationApi {
     /// This field is a reserved pointer to Rust-managed data and must not be used by C client
     /// code.
     verification_api_wrapper: *mut c_void,
+}
+
+impl VeraisonVerificationApi {
+    pub fn get_algorithm(&self) -> *const libc::c_char {
+        self.algorithm
+    }
+
+    pub fn get_endpoint_count(&self) -> libc::size_t {
+        self.endpoint_count
+    }
+
+    pub fn get_endpoint_list(&self) -> *const VeraisonApiEndpoint {
+        self.endpoint_list
+    }
+
+    pub fn get_public_key_pem(&self) -> *const libc::c_char {
+        self.public_key_pem
+    }
 }
 
 /// This structure contains the Rust-managed objects that are behind the raw pointers sent back to C
