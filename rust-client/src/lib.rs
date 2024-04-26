@@ -345,6 +345,11 @@ impl VerificationApi {
             .map_err(|e| Error::DataConversionError(e.to_string()))
     }
 
+    /// Obtains the EAR verification public key as a JSON string.
+    pub fn ear_verification_key_as_string(&self) -> String {
+        self.ear_verification_key.to_string()
+    }
+
     /// Obtains the signature algorithm scheme used with the EAR.
     pub fn ear_verification_algorithm(&self) -> String {
         match &self.ear_verification_key.algorithm {
