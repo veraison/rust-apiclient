@@ -1,6 +1,8 @@
 // Copyright 2022 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::multiple_crate_versions)]
+
 #[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("configuration error: {0}")]
