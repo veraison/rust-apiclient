@@ -1,6 +1,8 @@
 // Copyright 2022 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::multiple_crate_versions)]
+
 #[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("configuration error: {0}")]
@@ -343,6 +345,11 @@ impl VerificationApi {
         (*key)
             .try_to_pem()
             .map_err(|e| Error::DataConversionError(e.to_string()))
+    }
+
+    /// Obtains the EAR verification public key as a JSON string.
+    pub fn ear_verification_key_as_string(&self) -> String {
+        self.ear_verification_key.to_string()
     }
 
     /// Obtains the signature algorithm scheme used with the EAR.
