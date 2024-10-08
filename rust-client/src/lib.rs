@@ -1,7 +1,15 @@
-// Copyright 2022 Contributors to the Veraison project.
+// Copyright 2022-2024 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
 #![allow(clippy::multiple_crate_versions)]
+
+use std::{
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+use reqwest::{Certificate, ClientBuilder};
 
 #[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -22,6 +30,12 @@ pub enum Error {
 impl From<reqwest::Error> for Error {
     fn from(re: reqwest::Error) -> Self {
         Error::ApiError(re.to_string())
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(re: std::io::Error) -> Self {
+        Error::ConfigError(re.to_string())
     }
 }
 
@@ -55,7 +69,7 @@ type EvidenceCreationCb =
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
     new_session_url: Option<String>,
-    // TODO(tho) add TLS config / authn tokens etc.
+    root_certificate: Option<PathBuf>,
 }
 
 impl ChallengeResponseBuilder {
@@ -63,6 +77,7 @@ impl ChallengeResponseBuilder {
     pub fn new() -> Self {
         Self {
             new_session_url: None,
+            root_certificate: None,
         }
     }
 
@@ -74,16 +89,34 @@ impl ChallengeResponseBuilder {
         self
     }
 
+    pub fn with_root_certificate(mut self, v: PathBuf) -> ChallengeResponseBuilder {
+        self.root_certificate = Some(v);
+        self
+    }
+
     /// Instantiate a valid ChallengeResponse object, or fail with an error.
     pub fn build(self) -> Result<ChallengeResponse, Error> {
         let new_session_url_str = self
             .new_session_url
             .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
 
+        let mut http_client_builder: ClientBuilder = reqwest::ClientBuilder::new();
+
+        http_client_builder = http_client_builder.use_rustls_tls();
+
+        if self.root_certificate.is_some() {
+            let mut buf = Vec::new();
+            File::open(self.root_certificate.unwrap())?.read_to_end(&mut buf)?;
+            let cert = Certificate::from_pem(&buf)?;
+            http_client_builder = http_client_builder.add_root_certificate(cert);
+        }
+
+        let http_client = http_client_builder.build()?;
+
         Ok(ChallengeResponse {
             new_session_url: url::Url::parse(&new_session_url_str)
                 .map_err(|e| Error::ConfigError(e.to_string()))?,
-            http_client: reqwest::Client::new(),
+            http_client,
         })
     }
 }
@@ -143,7 +176,7 @@ impl ChallengeResponse {
         nonce: &Nonce,
     ) -> Result<(String, ChallengeResponseSession), Error> {
         // ask veraison for a new session object
-        let resp = self.new_session_request(nonce).await.unwrap();
+        let resp = self.new_session_request(nonce).await?;
 
         // expect 201 and a Location header containing the URI of the newly
         // allocated session
@@ -203,8 +236,7 @@ impl ChallengeResponse {
             .header(reqwest::header::CONTENT_TYPE, media_type)
             .body(evidence.to_owned())
             .send()
-            .await
-            .unwrap();
+            .await?;
 
         let status = resp.status();
 
@@ -338,7 +370,7 @@ pub struct VerificationApi {
     ear_verification_key: jsonwebkey::JsonWebKey,
     media_types: Vec<String>,
     version: String,
-    //service_state: ServiceState,
+    service_state: ServiceState,
     api_endpoints: std::collections::HashMap<String, String>,
 }
 
@@ -390,7 +422,7 @@ impl VerificationApi {
 
     /// Indicates whether the service is starting, ready, terminating or down.
     pub fn service_state(&self) -> &ServiceState {
-        &ServiceState::Ready
+        &self.service_state
     }
 
     /// Gets the API endpoint associated with a specific endpoint name.
@@ -415,6 +447,65 @@ impl VerificationApi {
     }
 }
 
+/// A builder for VerificationApi objects
+pub struct DiscoveryBuilder {
+    url: Option<String>,
+    root_certificate: Option<PathBuf>,
+}
+
+impl DiscoveryBuilder {
+    /// default constructor
+    pub fn new() -> Self {
+        Self {
+            url: None,
+            root_certificate: None,
+        }
+    }
+
+    /// Use this method to supply the URL of the discovery endpoint
+    pub fn with_url(mut self, v: String) -> DiscoveryBuilder {
+        self.url = Some(v);
+        self
+    }
+
+    pub fn with_root_certificate(mut self, v: PathBuf) -> DiscoveryBuilder {
+        self.root_certificate = Some(v);
+        self
+    }
+
+    /// Instantiate a valid Discovery object, or fail with an error.
+    pub fn build(self) -> Result<Discovery, Error> {
+        let url = self
+            .url
+            .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
+
+        let mut http_client_builder: ClientBuilder = reqwest::ClientBuilder::new();
+
+        http_client_builder = http_client_builder.use_rustls_tls();
+
+        if self.root_certificate.is_some() {
+            let mut buf = Vec::new();
+            File::open(self.root_certificate.unwrap())?.read_to_end(&mut buf)?;
+            let cert = Certificate::from_pem(&buf)?;
+            http_client_builder = http_client_builder.add_root_certificate(cert);
+        }
+
+        let http_client = http_client_builder.build()?;
+
+        Ok(Discovery {
+            verification_url: url::Url::parse(&url)
+                .map_err(|e| Error::ConfigError(e.to_string()))?,
+            http_client,
+        })
+    }
+}
+
+impl Default for DiscoveryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// This structure allows Veraison endpoints and service capabilities to be discovered
 /// dynamically.
 ///
@@ -423,7 +514,6 @@ impl VerificationApi {
 ///
 /// Currently, only discovery of the verification API is implemented.
 pub struct Discovery {
-    _provisioning_url: url::Url,
     verification_url: url::Url,
     http_client: reqwest::Client,
 }
@@ -435,14 +525,10 @@ impl Discovery {
         let base_url =
             url::Url::parse(&base_url_str).map_err(|e| Error::ConfigError(e.to_string()))?;
 
-        let mut _provisioning_url = base_url.clone();
-        _provisioning_url.set_path(".well-known/veraison/provisioning");
-
         let mut verification_url = base_url;
         verification_url.set_path(".well-known/veraison/verification");
 
         Ok(Discovery {
-            _provisioning_url,
             verification_url,
             http_client: reqwest::Client::new(),
         })
@@ -647,7 +733,7 @@ mod tests {
             .expect("Failed to get verification endpoint details.");
 
         // Check that we've pulled and deserialized everything that we expect
-        //assert_eq!(verification_api.service_state, ServiceState::Ready);
+        assert_eq!(verification_api.service_state, ServiceState::Ready);
         assert_eq!(verification_api.version, String::from("commit-cb11fa0"));
         assert_eq!(verification_api.media_types.len(), 5);
         assert_eq!(
