@@ -1,6 +1,8 @@
 // Copyright 2022 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::multiple_crate_versions)]
+
 use std::{
     fs::File,
     io::Read,
@@ -99,6 +101,8 @@ impl ChallengeResponseBuilder {
             .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
 
         let mut http_client_builder: ClientBuilder = reqwest::ClientBuilder::new();
+
+        http_client_builder = http_client_builder.use_rustls_tls();
 
         if self.root_certificate.is_some() {
             let mut buf = Vec::new();
@@ -367,7 +371,7 @@ pub struct VerificationApi {
     ear_verification_key: jsonwebkey::JsonWebKey,
     media_types: Vec<String>,
     version: String,
-    //service_state: ServiceState,
+    service_state: ServiceState,
     api_endpoints: std::collections::HashMap<String, String>,
 }
 
@@ -419,7 +423,7 @@ impl VerificationApi {
 
     /// Indicates whether the service is starting, ready, terminating or down.
     pub fn service_state(&self) -> &ServiceState {
-        &ServiceState::Ready
+        &self.service_state
     }
 
     /// Gets the API endpoint associated with a specific endpoint name.
@@ -478,6 +482,8 @@ impl DiscoveryBuilder {
             .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
 
         let mut http_client_builder: ClientBuilder = reqwest::ClientBuilder::new();
+
+        http_client_builder = http_client_builder.use_rustls_tls();
 
         if self.root_certificate.is_some() {
             let mut buf = Vec::new();
@@ -729,7 +735,7 @@ mod tests {
             .expect("Failed to get verification endpoint details.");
 
         // Check that we've pulled and deserialized everything that we expect
-        assert_eq!(*verification_api.service_state(), ServiceState::Ready);
+        assert_eq!(verification_api.service_state, ServiceState::Ready);
         assert_eq!(verification_api.version, String::from("commit-cb11fa0"));
         assert_eq!(verification_api.media_types.len(), 5);
         assert_eq!(
