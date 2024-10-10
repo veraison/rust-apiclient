@@ -294,10 +294,10 @@ struct ShimVerificationApi {
 /// It is the caller's responsibility to ensure that `nonce` is:
 ///
 /// - **EITHER** a null pointer (in which case the nonce challenge is issued on
-/// the server side)
+///   the server side)
 /// - **OR** a pointer to a valid buffer of initialized data of at
-/// least `nonce_size` bytes, which will not be mutated for the duration
-/// of this function call.
+///   least `nonce_size` bytes, which will not be mutated for the duration
+///   of this function call.
 ///
 /// It is the caller's responsibility to ensure that `out_session` is
 /// not a null pointer.
@@ -428,13 +428,13 @@ pub async unsafe extern "C" fn open_challenge_response_session(
 /// The caller guarantees the following:
 ///
 /// - The `session` parameter is a non-NULL pointer to a valid structure that was received from a prior
-/// successful call to [`open_challenge_response_session()`]. Do not call this function with a NULL
-/// pointer or a pointer to uninitialized data. Also do not call this function with a pointer to a
-/// failed session.
+///   successful call to [`open_challenge_response_session()`]. Do not call this function with a NULL
+///   pointer or a pointer to uninitialized data. Also do not call this function with a pointer to a
+///   failed session.
 /// - The `evidence` parameter is not NULL, and points to a valid data buffer of at least `evidence_size`
-/// bytes that will not be mutated for the duration of this function call.
+///   bytes that will not be mutated for the duration of this function call.
 /// - The `media_type` parameter is a non-NULL pointer to a valid NUL-terminated character string that
-/// will not be mutated for the duration of this function call.
+///   will not be mutated for the duration of this function call.
 #[no_mangle]
 pub async unsafe extern "C" fn challenge_response(
     session: *mut ChallengeResponseSession,
