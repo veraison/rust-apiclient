@@ -294,15 +294,15 @@ struct ShimVerificationApi {
 /// It is the caller's responsibility to ensure that `nonce` is:
 ///
 /// - **EITHER** a null pointer (in which case the nonce challenge is issued on
-/// the server side)
+///   the server side)
 /// - **OR** a pointer to a valid buffer of initialized data of at
-/// least `nonce_size` bytes, which will not be mutated for the duration
-/// of this function call.
+///   least `nonce_size` bytes, which will not be mutated for the duration
+///   of this function call.
 ///
 /// It is the caller's responsibility to ensure that `out_session` is
 /// not a null pointer.
 #[no_mangle]
-pub unsafe extern "C" fn open_challenge_response_session(
+pub async unsafe extern "C" fn open_challenge_response_session(
     new_session_url: *const libc::c_char,
     nonce_size: libc::size_t,
     nonce: *const u8,
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn open_challenge_response_session(
     // This now won't panic because we dealt with errors by early return above.
     let cr = cr.unwrap();
 
-    let newsession = cr.new_session(&nonce_converted);
+    let newsession = cr.new_session(&nonce_converted).await;
 
     match newsession {
         Ok(_) => {}
@@ -428,15 +428,15 @@ pub unsafe extern "C" fn open_challenge_response_session(
 /// The caller guarantees the following:
 ///
 /// - The `session` parameter is a non-NULL pointer to a valid structure that was received from a prior
-/// successful call to [`open_challenge_response_session()`]. Do not call this function with a NULL
-/// pointer or a pointer to uninitialized data. Also do not call this function with a pointer to a
-/// failed session.
+///   successful call to [`open_challenge_response_session()`]. Do not call this function with a NULL
+///   pointer or a pointer to uninitialized data. Also do not call this function with a pointer to a
+///   failed session.
 /// - The `evidence` parameter is not NULL, and points to a valid data buffer of at least `evidence_size`
-/// bytes that will not be mutated for the duration of this function call.
+///   bytes that will not be mutated for the duration of this function call.
 /// - The `media_type` parameter is a non-NULL pointer to a valid NUL-terminated character string that
-/// will not be mutated for the duration of this function call.
+///   will not be mutated for the duration of this function call.
 #[no_mangle]
-pub unsafe extern "C" fn challenge_response(
+pub async unsafe extern "C" fn challenge_response(
     session: *mut ChallengeResponseSession,
     evidence_size: libc::size_t,
     evidence: *const u8,
@@ -459,11 +459,15 @@ pub unsafe extern "C" fn challenge_response(
 
     // Actually call the client
     let client_result = match shim_session.client.as_ref() {
-        Some(client) => client.challenge_response(
-            evidence_bytes,
-            media_type_str,
-            shim_session.session_url_cstring.to_str().unwrap(),
-        ),
+        Some(client) => {
+            client
+                .challenge_response(
+                    evidence_bytes,
+                    media_type_str,
+                    shim_session.session_url_cstring.to_str().unwrap(),
+                )
+                .await
+        }
         // If we have no client, it means that the session was never properly established in the first place.
         None => Err(Error::ConfigError(
             "Cannot supply evidence because there is no session endpoint.".to_string(),
@@ -531,7 +535,7 @@ pub unsafe extern "C" fn free_challenge_response_session(session: *mut Challenge
 /// It is the caller's responsibility to ensure that `out_api` is
 /// not a null pointer.
 #[no_mangle]
-pub unsafe extern "C" fn veraison_get_verification_api(
+pub async unsafe extern "C" fn veraison_get_verification_api(
     veraison_service_base_url: *const libc::c_char,
     out_api: *mut *mut VeraisonVerificationApi,
 ) -> VeraisonResult {
@@ -541,7 +545,7 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         url_cstr.to_str().unwrap()
     };
 
-    let api = safe_get_verification_api(url_str);
+    let api = safe_get_verification_api(url_str).await;
 
     if let Err(e) = api {
         return stub_verification_api_from_error(&e, out_api);
@@ -580,10 +584,10 @@ pub unsafe extern "C" fn veraison_free_verification_api(
 // veraison_get_verification_api.
 // This returns proper Rust errors, meanings that it can be coded using Rust-style error handling,
 // which helps with the several potential fail points in this flow.
-fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, Error> {
+async fn safe_get_verification_api(base_url: &str) -> Result<VeraisonVerificationApi, Error> {
     let discovery = Discovery::from_base_url(String::from(base_url))?;
 
-    let verification_api = discovery.get_verification_api()?;
+    let verification_api = discovery.get_verification_api().await?;
 
     let public_key_der_vec = verification_api.ear_verification_key_as_der()?;
 
@@ -835,6 +839,8 @@ mod tests {
         let result =
             unsafe { veraison_get_verification_api(base_url.as_ptr(), &mut verification_api) };
 
+        let result = result.await;
+
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
 
@@ -916,6 +922,8 @@ mod tests {
             )
         };
 
+        let result = result.await;
+
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
 
@@ -953,6 +961,8 @@ mod tests {
                 media_type.as_ptr(),
             )
         };
+
+        let result = result.await;
 
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
