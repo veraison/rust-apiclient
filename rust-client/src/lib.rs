@@ -1,4 +1,4 @@
-// Copyright 2022 Contributors to the Veraison project.
+// Copyright 2022-2024 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
 #![allow(clippy::multiple_crate_versions)]
@@ -176,7 +176,7 @@ impl ChallengeResponse {
         nonce: &Nonce,
     ) -> Result<(String, ChallengeResponseSession), Error> {
         // ask veraison for a new session object
-        let resp = self.new_session_request(nonce).await.unwrap();
+        let resp = self.new_session_request(nonce).await?;
 
         // expect 201 and a Location header containing the URI of the newly
         // allocated session
@@ -236,8 +236,7 @@ impl ChallengeResponse {
             .header(reqwest::header::CONTENT_TYPE, media_type)
             .body(evidence.to_owned())
             .send()
-            .await
-            .unwrap();
+            .await?;
 
         let status = resp.status();
 
@@ -464,7 +463,6 @@ impl DiscoveryBuilder {
     }
 
     /// Use this method to supply the URL of the discovery endpoint
-    /// TODO(tho)
     pub fn with_url(mut self, v: String) -> DiscoveryBuilder {
         self.url = Some(v);
         self
