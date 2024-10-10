@@ -302,7 +302,7 @@ struct ShimVerificationApi {
 /// It is the caller's responsibility to ensure that `out_session` is
 /// not a null pointer.
 #[no_mangle]
-pub unsafe extern "C" fn open_challenge_response_session(
+pub async unsafe extern "C" fn open_challenge_response_session(
     new_session_url: *const libc::c_char,
     nonce_size: libc::size_t,
     nonce: *const u8,
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn open_challenge_response_session(
     // This now won't panic because we dealt with errors by early return above.
     let cr = cr.unwrap();
 
-    let newsession = cr.new_session(&nonce_converted);
+    let newsession = cr.new_session(&nonce_converted).await;
 
     match newsession {
         Ok(_) => {}
@@ -436,7 +436,7 @@ pub unsafe extern "C" fn open_challenge_response_session(
 /// - The `media_type` parameter is a non-NULL pointer to a valid NUL-terminated character string that
 /// will not be mutated for the duration of this function call.
 #[no_mangle]
-pub unsafe extern "C" fn challenge_response(
+pub async unsafe extern "C" fn challenge_response(
     session: *mut ChallengeResponseSession,
     evidence_size: libc::size_t,
     evidence: *const u8,
@@ -459,11 +459,15 @@ pub unsafe extern "C" fn challenge_response(
 
     // Actually call the client
     let client_result = match shim_session.client.as_ref() {
-        Some(client) => client.challenge_response(
-            evidence_bytes,
-            media_type_str,
-            shim_session.session_url_cstring.to_str().unwrap(),
-        ),
+        Some(client) => {
+            client
+                .challenge_response(
+                    evidence_bytes,
+                    media_type_str,
+                    shim_session.session_url_cstring.to_str().unwrap(),
+                )
+                .await
+        }
         // If we have no client, it means that the session was never properly established in the first place.
         None => Err(Error::ConfigError(
             "Cannot supply evidence because there is no session endpoint.".to_string(),
@@ -531,7 +535,7 @@ pub unsafe extern "C" fn free_challenge_response_session(session: *mut Challenge
 /// It is the caller's responsibility to ensure that `out_api` is
 /// not a null pointer.
 #[no_mangle]
-pub unsafe extern "C" fn veraison_get_verification_api(
+pub async unsafe extern "C" fn veraison_get_verification_api(
     veraison_service_base_url: *const libc::c_char,
     out_api: *mut *mut VeraisonVerificationApi,
 ) -> VeraisonResult {
@@ -541,7 +545,7 @@ pub unsafe extern "C" fn veraison_get_verification_api(
         url_cstr.to_str().unwrap()
     };
 
-    let api = safe_get_verification_api(url_str);
+    let api = safe_get_verification_api(url_str).await;
 
     if let Err(e) = api {
         return stub_verification_api_from_error(&e, out_api);
