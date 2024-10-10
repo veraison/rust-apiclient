@@ -839,6 +839,8 @@ mod tests {
         let result =
             unsafe { veraison_get_verification_api(base_url.as_ptr(), &mut verification_api) };
 
+        let result = result.await;
+
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
 
@@ -920,6 +922,8 @@ mod tests {
             )
         };
 
+        let result = result.await;
+
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
 
@@ -957,6 +961,8 @@ mod tests {
                 media_type.as_ptr(),
             )
         };
+
+        let result = result.await;
 
         // We should have an Ok result
         assert_eq!(result, VeraisonResult::Ok);
