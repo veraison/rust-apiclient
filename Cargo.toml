@@ -1,2 +1,29 @@
-[workspace]
-members = ["rust-client", "c-wrapper"]
+[package]
+name = "veraison-apiclient"
+version = "0.0.1"
+edition = "2021"
+repository = "https://github.com/veraison/rust-apiclient"
+readme = "README.md"
+description = "client API for Veraison"
+license = "Apache-2.0"
+keywords = ["attestation", "verification", "veraison"]
+categories = ["web-programming"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "blocking"] }
+url = { version = "2", features = ["serde"] }
+base64 = "0.13.0"
+thiserror = "1"
+serde = "1.0.144"
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+jsonwebkey = { version = "0.3.5", features = ["pkcs-convert"] }
+
+[dependencies.serde_with]
+version = "1.14.0"
+features = ["base64", "chrono"]
+
+[dev-dependencies]
+wiremock = "0.5"
+async-std = { version = "1.6.5", features = ["attributes"] }
