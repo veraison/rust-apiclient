@@ -18,24 +18,30 @@ fn my_evidence_builder(nonce: &[u8], accept: &[String]) -> Result<(Vec<u8>, Stri
 }
 
 fn main() {
-    let base_url = "http://127.0.0.1:8080";
+    let base_url = "https://localhost:8080";
 
-    let discovery = Discovery::from_base_url(String::from(base_url))
-        .expect("Failed to start API discovery with the service.");
+    let discovery_api_endpoint = format!("{}{}", base_url, "/.well-known/veraison/verification");
+
+    let discovery = DiscoveryBuilder::new()
+        .with_url(discovery_api_endpoint)
+        .with_root_certificate("veraison-root.crt".into())
+        .build()
+        .expect("Failed to start API discovery with the service");
 
     let verification_api = discovery
         .get_verification_api()
-        .expect("Failed to discover the verification endpoint details.");
+        .expect("Failed to discover the verification endpoint details");
 
     let relative_endpoint = verification_api
         .get_api_endpoint("newChallengeResponseSession")
-        .expect("Could not locate a newChallengeResponseSession endpoint.");
+        .expect("Could not locate a newChallengeResponseSession endpoint");
 
     let api_endpoint = format!("{}{}", base_url, relative_endpoint);
 
     // create a ChallengeResponse object
     let cr = ChallengeResponseBuilder::new()
         .with_new_session_url(api_endpoint)
+        .with_root_certificate("veraison-root.crt".into())
         .build()
         .unwrap();
 

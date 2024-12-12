@@ -3,6 +3,10 @@
 
 #![allow(clippy::multiple_crate_versions)]
 
+use std::{fs::File, io::Read, path::PathBuf};
+
+use reqwest::{blocking::ClientBuilder, Certificate};
+
 #[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("configuration error: {0}")]
@@ -22,6 +26,12 @@ pub enum Error {
 impl From<reqwest::Error> for Error {
     fn from(re: reqwest::Error) -> Self {
         Error::ApiError(re.to_string())
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(re: std::io::Error) -> Self {
+        Error::ConfigError(re.to_string())
     }
 }
 
@@ -54,7 +64,7 @@ type EvidenceCreationCb = fn(nonce: &[u8], accepted: &[String]) -> Result<(Vec<u
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
     new_session_url: Option<String>,
-    // TODO(tho) add TLS config / authn tokens etc.
+    root_certificate: Option<PathBuf>,
 }
 
 impl ChallengeResponseBuilder {
@@ -62,14 +72,24 @@ impl ChallengeResponseBuilder {
     pub fn new() -> Self {
         Self {
             new_session_url: None,
+            root_certificate: None,
         }
     }
 
     /// Use this method to supply the URL of the verification endpoint that will create
-    /// new challenge-response sessions, e.g.
+    /// new challenge-response sessions, e.g.:
     /// "https://veraison.example/challenge-response/v1/newSession".
     pub fn with_new_session_url(mut self, v: String) -> ChallengeResponseBuilder {
         self.new_session_url = Some(v);
+        self
+    }
+
+    /// Use this method to add a custom root certificate.  For example, this can
+    /// be used to connect to a server that has a self-signed certificate which
+    /// is not present in (and does not need to be added to) the system's trust
+    /// anchor store.
+    pub fn with_root_certificate(mut self, v: PathBuf) -> ChallengeResponseBuilder {
+        self.root_certificate = Some(v);
         self
     }
 
@@ -79,10 +99,21 @@ impl ChallengeResponseBuilder {
             .new_session_url
             .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
 
+        let mut http_client_builder: ClientBuilder = reqwest::blocking::ClientBuilder::new();
+
+        if self.root_certificate.is_some() {
+            let mut buf = Vec::new();
+            File::open(self.root_certificate.unwrap())?.read_to_end(&mut buf)?;
+            let cert = Certificate::from_pem(&buf)?;
+            http_client_builder = http_client_builder.add_root_certificate(cert);
+        }
+
+        let http_client = http_client_builder.use_rustls_tls().build()?;
+
         Ok(ChallengeResponse {
             new_session_url: url::Url::parse(&new_session_url_str)
                 .map_err(|e| Error::ConfigError(e.to_string()))?,
-            http_client: reqwest::blocking::Client::builder().build()?,
+            http_client,
         })
     }
 }
@@ -330,6 +361,68 @@ pub struct VerificationApi {
     api_endpoints: std::collections::HashMap<String, String>,
 }
 
+/// A builder for Discovery objects
+pub struct DiscoveryBuilder {
+    url: Option<String>,
+    root_certificate: Option<PathBuf>,
+}
+
+impl DiscoveryBuilder {
+    /// default constructor
+    pub fn new() -> Self {
+        Self {
+            url: None,
+            root_certificate: None,
+        }
+    }
+
+    /// Use this method to supply the URL of the discovery endpoint, e.g.:
+    /// "https://veraison.example/.well-known/veraison/verification"
+    pub fn with_url(mut self, v: String) -> DiscoveryBuilder {
+        self.url = Some(v);
+        self
+    }
+
+    /// Use this method to add a custom root certificate.  For example, this can
+    /// be used to connect to a server that has a self-signed certificate which
+    /// is not present in (and does not need to be added to) the system's trust
+    /// anchor store.
+    pub fn with_root_certificate(mut self, v: PathBuf) -> DiscoveryBuilder {
+        self.root_certificate = Some(v);
+        self
+    }
+
+    /// Instantiate a valid Discovery object, or fail with an error.
+    pub fn build(self) -> Result<Discovery, Error> {
+        let url = self
+            .url
+            .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
+
+        let mut http_client_builder: ClientBuilder = reqwest::blocking::ClientBuilder::new();
+
+        if self.root_certificate.is_some() {
+            let mut buf = Vec::new();
+            File::open(self.root_certificate.unwrap())?.read_to_end(&mut buf)?;
+            let cert = Certificate::from_pem(&buf)?;
+            http_client_builder = http_client_builder.add_root_certificate(cert);
+        }
+
+        let http_client = http_client_builder.use_rustls_tls().build()?;
+
+        Ok(Discovery {
+            verification_url: url::Url::parse(&url)
+                .map_err(|e| Error::ConfigError(e.to_string()))?,
+            http_client,
+        })
+    }
+}
+
+impl Default for DiscoveryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VerificationApi {
     /// Obtains the EAR verification public key encoded in ASN.1 DER format.
     pub fn ear_verification_key_as_der(&self) -> Result<Vec<u8>, Error> {
@@ -406,31 +499,27 @@ impl VerificationApi {
 /// This structure allows Veraison endpoints and service capabilities to be discovered
 /// dynamically.
 ///
-/// Use [`Discovery::from_base_url()`] to create an instance of this structure for the
+/// Use [`DiscoveryBuilder`] to create an instance of this structure for the
 /// Veraison service instance that you are communicating with.
 pub struct Discovery {
-    provisioning_url: url::Url, //TODO: The provisioning URL discovery is not implemented yet.
     verification_url: url::Url,
     http_client: reqwest::blocking::Client,
 }
 
 impl Discovery {
+    #[deprecated(since = "0.0.2", note = "please use the `DiscoveryBuilder` instead")]
     /// Establishes client API discovery for the Veraison service instance running at the
     /// given base URL.
     pub fn from_base_url(base_url_str: String) -> Result<Discovery, Error> {
         let base_url =
             url::Url::parse(&base_url_str).map_err(|e| Error::ConfigError(e.to_string()))?;
 
-        let mut provisioning_url = base_url.clone();
-        provisioning_url.set_path(".well-known/veraison/provisioning");
-
         let mut verification_url = base_url;
         verification_url.set_path(".well-known/veraison/verification");
 
         Ok(Discovery {
-            provisioning_url,
             verification_url,
-            http_client: reqwest::blocking::Client::builder().build()?,
+            http_client: reqwest::blocking::Client::new(),
         })
     }
 
@@ -621,7 +710,15 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let discovery = Discovery::from_base_url(mock_server.uri())
+        let discovery_api_endpoint = format!(
+            "{}{}",
+            mock_server.uri(),
+            "/.well-known/veraison/verification"
+        );
+
+        let discovery = DiscoveryBuilder::new()
+            .with_url(discovery_api_endpoint)
+            .build()
             .expect("Failed to create Discovery client.");
 
         let verification_api = discovery
