@@ -376,10 +376,15 @@ impl DiscoveryBuilder {
         }
     }
 
-    /// Use this method to supply the URL of the discovery endpoint, e.g.:
-    /// "https://veraison.example/.well-known/veraison/verification"
-    pub fn with_url(mut self, v: String) -> DiscoveryBuilder {
-        self.url = Some(v);
+    /// Use this method to supply the base URL of the discovery endpoint, e.g.
+    /// "https://veraison.example" in the full
+    /// "https://veraison.example/.well-known/veraison/verification".
+    /// This hides / encapsulate the details of what the actual URL looks like.
+    pub fn with_base_url(mut self, base_url: String) -> DiscoveryBuilder {
+        self.url = Some(format!(
+            "{}{}",
+            base_url, "/.well-known/veraison/verification"
+        ));
         self
     }
 
@@ -710,14 +715,8 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let discovery_api_endpoint = format!(
-            "{}{}",
-            mock_server.uri(),
-            "/.well-known/veraison/verification"
-        );
-
         let discovery = DiscoveryBuilder::new()
-            .with_url(discovery_api_endpoint)
+            .with_base_url(mock_server.uri())
             .build()
             .expect("Failed to create Discovery client.");
 
