@@ -19,6 +19,7 @@ thiserror = "2.0.6"
 serde = "1.0.216"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 jsonwebkey = { version = "0.3.5", features = ["pkcs-convert"] }
+tokio = { version = "1.43.0", features = ["full"] }
 
 [dependencies.serde_with]
 version = "3.11.0"
@@ -26,4 +27,4 @@ features = ["base64", "chrono"]
 
 [dev-dependencies]
 wiremock = "0.6.2"
-async-std = { version = "1.6.5", features = ["attributes"] }
+async-std = { version = "1.6.5", features = ["attributes", "tokio1"] }
