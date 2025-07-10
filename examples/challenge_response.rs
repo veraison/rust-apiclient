@@ -10,8 +10,8 @@ fn my_evidence_builder(
     accept: &[String],
     token: Vec<u8>,
 ) -> Result<(Vec<u8>, String), Error> {
-    println!("server challenge: {:?}", nonce);
-    println!("acceptable media types: {:#?}", accept);
+    println!("server challenge: {nonce:?}");
+    println!("acceptable media types: {accept:#?}");
 
     let mut token = token;
     if token.is_empty() {
@@ -45,7 +45,7 @@ async fn main() {
         .get_api_endpoint("newChallengeResponseSession")
         .expect("Could not locate a newChallengeResponseSession endpoint");
 
-    let api_endpoint = format!("{}{}", base_url, relative_endpoint);
+    let api_endpoint = format!("{base_url}{relative_endpoint}");
 
     // create a ChallengeResponse object
     let cr = ChallengeResponseBuilder::new()
@@ -58,7 +58,7 @@ async fn main() {
     // alternatively, to let Veraison pick the challenge: "let nonce = Nonce::Size(32);"
 
     match cr.run(nonce, my_evidence_builder, Vec::new()).await {
-        Err(e) => println!("Error: {}", e),
-        Ok(attestation_result) => println!("Attestation Result: {}", attestation_result),
+        Err(e) => println!("Error: {e}"),
+        Ok(attestation_result) => println!("Attestation Result: {attestation_result}"),
     }
 }

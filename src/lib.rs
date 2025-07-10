@@ -49,7 +49,7 @@ impl std::fmt::Debug for Error {
             | Error::ApiError(e)
             | Error::CallbackError(e)
             | Error::DataConversionError(e) => {
-                write!(f, "{}", e)
+                write!(f, "{e}")
             }
         }
     }
@@ -263,8 +263,7 @@ impl ChallengeResponse {
                     Err(Error::NotImplementedError("asynchronous model".to_string()))
                 }
                 status => Err(Error::ApiError(format!(
-                    "session response has unexpected success status: {}",
-                    status,
+                    "session response has unexpected success status: {status}",
                 ))),
             }
         } else {
