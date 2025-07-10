@@ -555,6 +555,7 @@ impl Discovery {
     }
 }
 
+#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct ProblemDetails {
     r#type: String,
