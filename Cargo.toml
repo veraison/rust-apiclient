@@ -12,7 +12,9 @@ categories = ["web-programming"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = { version = "0.12.9", features = ["json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.13.2", features = ["json", "blocking"] }
+reqwest-middleware = "0.5.1"
+http-cache-reqwest = { version = "1.0.0-alpha.2" }
 url = { version = "2", features = ["serde"] }
 base64 = "0.22.1"
 thiserror = "2.0.6"
@@ -24,6 +26,10 @@ coserv-rs = { git = "https://github.com/veraison/coserv-rs.git" }
 ciborium = { version = "^0.2" }
 mediatype = "0.21.0"
 uritemplate-next = "0.2.0"
+
+[features]
+coserv-memory-caching = [ "http-cache-reqwest/manager-moka" ]
+coserv-disk-caching = [ "http-cache-reqwest/manager-cacache" ]
 
 [dependencies.serde_with]
 version = "3.14.0"
