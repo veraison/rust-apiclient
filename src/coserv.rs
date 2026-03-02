@@ -6,6 +6,14 @@
 use std::{fs::File, io::Read, path::PathBuf};
 
 use ciborium::Value as CborValue;
+use http_cache_reqwest::{Cache, CacheMode, HttpCache, HttpCacheOptions};
+
+#[cfg(feature = "coserv-disk-caching")]
+use http_cache_reqwest::CACacheManager;
+
+#[cfg(feature = "coserv-memory-caching")]
+use http_cache_reqwest::{MokaCache, MokaManager};
+
 use mediatype::{MediaType, Name, Value, WriteParams};
 use reqwest::{Certificate, ClientBuilder};
 
@@ -51,6 +59,12 @@ impl ConciseProblemDetails {
 pub struct QueryRunnerBuilder {
     request_response_url: Option<String>,
     root_certificate: Option<PathBuf>,
+    #[cfg(feature = "coserv-disk-caching")]
+    disk_cache: Option<CACacheManager>,
+    #[cfg(feature = "coserv-memory-caching")]
+    memory_cache: Option<MokaManager>,
+    cache_mode: Option<CacheMode>,
+    http_cache_options: Option<HttpCacheOptions>,
 }
 
 impl QueryRunnerBuilder {
@@ -59,6 +73,12 @@ impl QueryRunnerBuilder {
         Self {
             request_response_url: None,
             root_certificate: None,
+            #[cfg(feature = "coserv-disk-caching")]
+            disk_cache: None,
+            #[cfg(feature = "coserv-memory-caching")]
+            memory_cache: None,
+            cache_mode: None,
+            http_cache_options: None,
         }
     }
 
@@ -74,6 +94,71 @@ impl QueryRunnerBuilder {
     /// the system's trust anchor store.
     pub fn with_root_certificate(mut self, v: PathBuf) -> QueryRunnerBuilder {
         self.root_certificate = Some(v);
+        self
+    }
+
+    /// Use this method to build a [QueryRunner] with client-side caching enabled using local disk storage.
+    /// Pass in the path to the folder on the local system that should be used for the cache.
+    /// Default caching mode and options will also be applied.
+    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
+    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
+    /// NOTE: This is a convenience method. It is functionally equivalent to [QueryRunnerBuilder::with_disk_cache],
+    /// but avoids the need for the caller to construct the full cache manager object. The caller only supplies the file path.
+    #[cfg(feature = "coserv-disk-caching")]
+    pub fn with_default_disk_cache(self, v: PathBuf) -> QueryRunnerBuilder {
+        self.with_disk_cache(CACacheManager::new(v, true))
+    }
+
+    /// Use this method to build a [QueryRunner] with client-side caching enabled using local disk storage.
+    /// Pass in the path to the folder on the local system that should be used for the cache.
+    /// Default caching mode and options will also be applied.
+    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
+    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
+    #[cfg(feature = "coserv-disk-caching")]
+    pub fn with_disk_cache(mut self, v: CACacheManager) -> QueryRunnerBuilder {
+        self.disk_cache = Some(v);
+        self
+    }
+
+    /// Use this method to build a [QueryRunner] with client-side caching enabled using local memory.
+    /// In-memory caching is implemented using [http_cache_reqwest::MokaManager].
+    /// This default option will create the cache manager automatically, with capacity for the given number of entries.
+    /// For finer control of the cache behaviour, the caller can construct a custom cache manager and configure it
+    /// with [QueryRunnerBuilder::with_memory_cache].
+    /// Default caching mode and options will also be applied.
+    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
+    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
+    /// NOTE: This is a convenience method. It is functionally equivalent to [QueryRunnerBuilder::with_memory_cache],
+    /// but avoids the need for the caller to construct the full cache manager object.
+    #[cfg(feature = "coserv-memory-caching")]
+    pub fn with_default_memory_cache(self, v: u64) -> QueryRunnerBuilder {
+        self.with_memory_cache(MokaManager::new(MokaCache::new(v)))
+    }
+
+    /// Use this method to build a [QueryRunner] with client-side caching enabled using local memory.
+    /// In-memory caching is implemented using [http_cache_reqwest::MokaManager], which the caller must configure.
+    /// Default caching mode and options will also be applied.
+    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
+    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
+    #[cfg(feature = "coserv-memory-caching")]
+    pub fn with_memory_cache(mut self, v: MokaManager) -> QueryRunnerBuilder {
+        self.memory_cache = Some(v);
+        self
+    }
+
+    /// Use this method to override the default cache mode.
+    /// NOTE: This method is only effective in combination with [QueryRunnerBuilder::with_disk_cache] or
+    /// [QueryRunnerBuilder::with_memory_cache].
+    pub fn with_cache_mode(mut self, v: CacheMode) -> QueryRunnerBuilder {
+        self.cache_mode = Some(v);
+        self
+    }
+
+    /// Use this method to override the default HTTP caching options.
+    /// NOTE: This method is only effective in combination with [QueryRunnerBuilder::with_disk_cache] or
+    /// [QueryRunnerBuilder::with_memory_cache].
+    pub fn with_http_cache_options(mut self, v: HttpCacheOptions) -> QueryRunnerBuilder {
+        self.http_cache_options = Some(v);
         self
     }
 
@@ -106,9 +191,37 @@ impl QueryRunnerBuilder {
 
         let http_client = http_client_builder.use_rustls_tls().build()?;
 
+        // Now add any required middleware to the client
+        let mut middleware_builder = reqwest_middleware::ClientBuilder::new(http_client);
+
+        // Add memory caching middleware if configured
+        #[cfg(feature = "coserv-memory-caching")]
+        if let Some(moka_mgr) = self.memory_cache {
+            let options = self.http_cache_options.clone().unwrap_or_default();
+            middleware_builder = middleware_builder.with(Cache(HttpCache {
+                mode: self.cache_mode.unwrap_or(CacheMode::Default),
+                manager: moka_mgr,
+                options,
+            }))
+        }
+
+        // Add disk caching middleware if configured (via a root path for the cache)
+        #[cfg(feature = "coserv-disk-caching")]
+        if let Some(ca_mgr) = self.disk_cache {
+            let options = self.http_cache_options.clone().unwrap_or_default();
+            middleware_builder = middleware_builder.with(Cache(HttpCache {
+                mode: self.cache_mode.unwrap_or(CacheMode::Default),
+                manager: ca_mgr,
+                options,
+            }))
+        }
+
+        // Use the middleware client as the client in the QueryRunner
+        let client_with_middleware = middleware_builder.build();
+
         Ok(QueryRunner {
             request_response_url_template: request_response_url_str.to_string(),
-            http_client,
+            http_client: client_with_middleware,
         })
     }
 }
@@ -123,7 +236,7 @@ impl Default for QueryRunnerBuilder {
 /// transactional request-response API.  Always use the [QueryRunnerBuilder] to instantiate it.
 pub struct QueryRunner {
     request_response_url_template: String,
-    http_client: reqwest::Client,
+    http_client: reqwest_middleware::ClientWithMiddleware,
 }
 
 impl<'a> QueryRunner {
@@ -404,6 +517,135 @@ mod tests {
         assert_eq!(
             CoservProfile::Uri("tag:example.com,2025:cc-platform#1.0.0".to_string()),
             coserv_out.profile
+        );
+    }
+
+    #[async_std::test]
+    #[cfg(feature = "coserv-disk-caching")]
+    async fn execute_query_disk_cached_okay() {
+        // Make a temporary directory to use as the cache (will be deleted when dropped)
+        let cache_root = tempfile::tempdir().unwrap();
+        let cache_path: PathBuf = cache_root.path().into();
+
+        let query_bytes = include_bytes!("../test/coserv/example_query.cbor");
+        let query = Coserv::from_cbor(query_bytes.as_slice()).unwrap();
+        let query_string = query.to_b64_url().unwrap();
+
+        let result_bytes = include_bytes!("../test/coserv/example_result.cbor");
+
+        let mock_server = MockServer::start().await;
+
+        // Respond with a cache control header, allowing the client to cache the response
+        let response = ResponseTemplate::new(200)
+            .insert_header("Cache-Control", "max-age=3600")
+            .set_body_bytes(result_bytes);
+
+        Mock::given(method("GET"))
+            .and(path("/".to_string() + &query_string))
+            .and(header_exists("Accept")) // Ideally we would fully match the header, but WireMock barfs on complex parameterised media types
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let cr = QueryRunnerBuilder::new()
+            .with_request_response_url(mock_server.uri() + "/{query}")
+            .with_default_disk_cache(cache_path.clone())
+            .build()
+            .unwrap();
+
+        // We should have an empty cache before we run the first query
+        assert!(cache_path.read_dir().unwrap().next().is_none());
+
+        // Run a query and assert a valid CoSERV result - this will be served from the MockServer
+        let coserv_out = cr.execute_query_unsigned(&query).await.unwrap();
+        assert_eq!(
+            CoservProfile::Uri("tag:example.com,2025:cc-platform#1.0.0".to_string()),
+            coserv_out.profile
+        );
+
+        // Cache should now be non-empty
+        // (The structure of the cache is an implementation detail, but there must be SOMETHING in there.)
+        assert!(cache_path.read_dir().unwrap().next().is_some());
+
+        // Run a flurry of identical queries and assert a valid CoSERV result - these will be served from the cache
+        for _i in 1..1000 {
+            let coserv_out = cr.execute_query_unsigned(&query).await.unwrap();
+            assert_eq!(
+                CoservProfile::Uri("tag:example.com,2025:cc-platform#1.0.0".to_string()),
+                coserv_out.profile
+            );
+        }
+
+        // Only the original request should have been received by the server, so
+        // assert that exactly one request was received.
+        assert_eq!(
+            mock_server
+                .received_requests()
+                .await
+                .unwrap_or(vec![])
+                .len(),
+            1
+        );
+    }
+
+    #[async_std::test]
+    #[cfg(feature = "coserv-memory-caching")]
+    async fn execute_query_memory_cached_okay() {
+        // Make the in-memory cache
+        let cache = MokaCache::new(10);
+        let cache_manager = MokaManager::new(cache);
+
+        let query_bytes = include_bytes!("../test/coserv/example_query.cbor");
+        let query = Coserv::from_cbor(query_bytes.as_slice()).unwrap();
+        let query_string = query.to_b64_url().unwrap();
+
+        let result_bytes = include_bytes!("../test/coserv/example_result.cbor");
+
+        let mock_server = MockServer::start().await;
+
+        // Respond with a cache control header, allowing the client to cache the response
+        let response = ResponseTemplate::new(200)
+            .insert_header("Cache-Control", "max-age=3600")
+            .set_body_bytes(result_bytes);
+
+        Mock::given(method("GET"))
+            .and(path("/".to_string() + &query_string))
+            .and(header_exists("Accept")) // Ideally we would fully match the header, but WireMock barfs on complex parameterised media types
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let cr = QueryRunnerBuilder::new()
+            .with_request_response_url(mock_server.uri() + "/{query}")
+            .with_memory_cache(cache_manager)
+            .build()
+            .unwrap();
+
+        // Run a query and assert a valid CoSERV result - this will be served from the MockServer
+        let coserv_out = cr.execute_query_unsigned(&query).await.unwrap();
+        assert_eq!(
+            CoservProfile::Uri("tag:example.com,2025:cc-platform#1.0.0".to_string()),
+            coserv_out.profile
+        );
+
+        // Run a flurry of identical queries and assert a valid CoSERV result - these will be served from the cache
+        for _i in 1..1000 {
+            let coserv_out = cr.execute_query_unsigned(&query).await.unwrap();
+            assert_eq!(
+                CoservProfile::Uri("tag:example.com,2025:cc-platform#1.0.0".to_string()),
+                coserv_out.profile
+            );
+        }
+
+        // Only the original request should have been received by the server, so
+        // assert that exactly one request was received.
+        assert_eq!(
+            mock_server
+                .received_requests()
+                .await
+                .unwrap_or(vec![])
+                .len(),
+            1
         );
     }
 
