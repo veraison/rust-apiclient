@@ -26,61 +26,63 @@ pub trait ConfigureHttp: Sized {
     /// the system's trust anchor store.
     fn with_root_certificate(self, v: PathBuf) -> Self;
 
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local disk storage.
+    /// Use this method to build a client with client-side caching enabled using local disk storage.
     /// Pass in the path to the folder on the local system that should be used for the cache.
     /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
-    /// NOTE: This is a convenience method. It is functionally equivalent to [QueryRunnerBuilder::with_disk_cache],
+    /// You may override these by calling [ConfigureHttp::with_cache_mode] and/or
+    /// [ConfigureHttp::with_http_cache_options] during the build.
+    /// NOTE: This is a convenience method. It is functionally equivalent to [ConfigureHttp::with_disk_cache],
     /// but avoids the need for the caller to construct the full cache manager object. The caller only supplies the file path.
     #[cfg(feature = "disk-caching")]
     fn with_default_disk_cache(self, v: PathBuf) -> Self {
         self.with_disk_cache(CACacheManager::new(v, true))
     }
 
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local disk storage.
+    /// Use this method to build a client with client-side caching enabled using local disk storage.
     /// Pass in the path to the folder on the local system that should be used for the cache.
     /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
+    /// You may override these by calling [ConfigureHttp::with_cache_mode] and/or
+    /// [ConfigureHttp::with_http_cache_options] during the build.
     #[cfg(feature = "disk-caching")]
     fn with_disk_cache(self, v: CACacheManager) -> Self;
 
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local memory.
+    /// Use this method to build a client with client-side caching enabled using local memory.
     /// In-memory caching is implemented using [http_cache_reqwest::MokaManager].
     /// This default option will create the cache manager automatically, with capacity for the given number of entries.
     /// For finer control of the cache behaviour, the caller can construct a custom cache manager and configure it
-    /// with [QueryRunnerBuilder::with_memory_cache].
+    /// with [ConfigureHttp::with_memory_cache].
     /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
-    /// NOTE: This is a convenience method. It is functionally equivalent to [QueryRunnerBuilder::with_memory_cache],
+    /// You may override these by calling [ConfigureHttp::with_cache_mode] and/or
+    /// [ConfigureHttp::with_http_cache_options] during the build.
+    /// NOTE: This is a convenience method. It is functionally equivalent to [ConfigureHttp::with_memory_cache],
     /// but avoids the need for the caller to construct the full cache manager object.
     #[cfg(feature = "memory-caching")]
     fn with_default_memory_cache(self, v: u64) -> Self {
         self.with_memory_cache(MokaManager::new(MokaCache::new(v)))
     }
 
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local memory.
+    /// Use this method to build a client with client-side caching enabled using local memory.
     /// In-memory caching is implemented using [http_cache_reqwest::MokaManager], which the caller must configure.
     /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
+    /// You may override these by calling [ConfigureHttp::with_cache_mode] and/or
+    /// [ConfigureHttp::with_http_cache_options] during the build.
     #[cfg(feature = "memory-caching")]
     fn with_memory_cache(self, v: MokaManager) -> Self;
 
     /// Use this method to override the default cache mode.
-    /// NOTE: This method is only effective in combination with [QueryRunnerBuilder::with_disk_cache] or
-    /// [QueryRunnerBuilder::with_memory_cache].
+    /// NOTE: This method is only effective in combination with [ConfigureHttp::with_disk_cache] or
+    /// [ConfigureHttp::with_memory_cache].
     fn with_cache_mode(self, v: CacheMode) -> Self;
 
     /// Use this method to override the default HTTP caching options.
-    /// NOTE: This method is only effective in combination with [QueryRunnerBuilder::with_disk_cache] or
-    /// [QueryRunnerBuilder::with_memory_cache].
+    /// NOTE: This method is only effective in combination with [ConfigureHttp::with_disk_cache] or
+    /// [ConfigureHttp::with_memory_cache].
     fn with_http_cache_options(self, v: HttpCacheOptions) -> Self;
 }
 
-/// A builder for [QueryRunner] objects
+/// A common builder for all HTTP client objects used in this crate.
+/// The common builder allows for the configuration of custom TLS root certificates along with
+/// middleware layers for client-side caching.
 pub(crate) struct HttpClientBuilder {
     root_certificate: Option<PathBuf>,
     #[cfg(feature = "disk-caching")]
