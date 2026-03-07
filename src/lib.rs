@@ -663,6 +663,24 @@ mod tests {
         "https://veraison.example/challenge-response/v1/newSession";
     const TEST_NEW_SESSION_URL_NOT_ABSOLUTE: &str = "/challenge-response/v1/newSession";
 
+    // Sample response crafted from CoSERV draft
+    const SAMPLE_COSERV_DISCOVERY_DOCUMENT_CBOR_BYTES: [u8; 209] = [
+        0xbf, 0x01, 0x6a, 0x31, 0x2e, 0x32, 0x2e, 0x33, 0x2d, 0x62, 0x65, 0x74, 0x61, 0x02, 0x81,
+        0xbf, 0x01, 0x78, 0x48, 0x61, 0x70, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+        0x2f, 0x63, 0x6f, 0x73, 0x65, 0x72, 0x76, 0x2b, 0x63, 0x6f, 0x73, 0x65, 0x3b, 0x20, 0x70,
+        0x72, 0x6f, 0x66, 0x69, 0x6c, 0x65, 0x3d, 0x22, 0x74, 0x61, 0x67, 0x3a, 0x76, 0x65, 0x6e,
+        0x64, 0x6f, 0x72, 0x2e, 0x63, 0x6f, 0x6d, 0x2c, 0x32, 0x30, 0x32, 0x35, 0x3a, 0x63, 0x63,
+        0x5f, 0x70, 0x6c, 0x61, 0x74, 0x66, 0x6f, 0x72, 0x6d, 0x23, 0x31, 0x2e, 0x30, 0x2e, 0x30,
+        0x22, 0x02, 0x82, 0x69, 0x63, 0x6f, 0x6c, 0x6c, 0x65, 0x63, 0x74, 0x65, 0x64, 0x66, 0x73,
+        0x6f, 0x75, 0x72, 0x63, 0x65, 0xff, 0x03, 0xa1, 0x75, 0x43, 0x6f, 0x53, 0x45, 0x52, 0x56,
+        0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+        0x78, 0x2b, 0x2f, 0x65, 0x6e, 0x64, 0x6f, 0x72, 0x73, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x2d,
+        0x64, 0x69, 0x73, 0x74, 0x72, 0x69, 0x62, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x2f, 0x76, 0x31,
+        0x2f, 0x63, 0x6f, 0x73, 0x65, 0x72, 0x76, 0x2f, 0x7b, 0x71, 0x75, 0x65, 0x72, 0x79, 0x7d,
+        0x04, 0x81, 0xa6, 0x01, 0x02, 0x02, 0x45, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x03, 0x26, 0x20,
+        0x01, 0x21, 0x44, 0x1a, 0x2b, 0x3c, 0x4d, 0x22, 0x44, 0x5e, 0x6f, 0x7a, 0x8b, 0xff,
+    ];
+
     #[test]
     fn default_constructor() {
         let b: ChallengeResponseBuilder = Default::default();
@@ -920,27 +938,10 @@ mod tests {
     async fn discover_coserv_cbor_ok() {
         let mock_server = MockServer::start().await;
 
-        // Sample response crafted from CoSERV draft
-        let raw_response: Vec<u8> = vec![
-            0xbf, 0x01, 0x6a, 0x31, 0x2e, 0x32, 0x2e, 0x33, 0x2d, 0x62, 0x65, 0x74, 0x61, 0x02,
-            0x81, 0xbf, 0x01, 0x78, 0x48, 0x61, 0x70, 0x70, 0x6c, 0x69, 0x63, 0x61, 0x74, 0x69,
-            0x6f, 0x6e, 0x2f, 0x63, 0x6f, 0x73, 0x65, 0x72, 0x76, 0x2b, 0x63, 0x6f, 0x73, 0x65,
-            0x3b, 0x20, 0x70, 0x72, 0x6f, 0x66, 0x69, 0x6c, 0x65, 0x3d, 0x22, 0x74, 0x61, 0x67,
-            0x3a, 0x76, 0x65, 0x6e, 0x64, 0x6f, 0x72, 0x2e, 0x63, 0x6f, 0x6d, 0x2c, 0x32, 0x30,
-            0x32, 0x35, 0x3a, 0x63, 0x63, 0x5f, 0x70, 0x6c, 0x61, 0x74, 0x66, 0x6f, 0x72, 0x6d,
-            0x23, 0x31, 0x2e, 0x30, 0x2e, 0x30, 0x22, 0x02, 0x82, 0x69, 0x63, 0x6f, 0x6c, 0x6c,
-            0x65, 0x63, 0x74, 0x65, 0x64, 0x66, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0xff, 0x03,
-            0xa1, 0x75, 0x43, 0x6f, 0x53, 0x45, 0x52, 0x56, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-            0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x78, 0x2b, 0x2f, 0x65, 0x6e,
-            0x64, 0x6f, 0x72, 0x73, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x2d, 0x64, 0x69, 0x73, 0x74,
-            0x72, 0x69, 0x62, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x2f, 0x76, 0x31, 0x2f, 0x63, 0x6f,
-            0x73, 0x65, 0x72, 0x76, 0x2f, 0x7b, 0x71, 0x75, 0x65, 0x72, 0x79, 0x7d, 0x04, 0x81,
-            0xa6, 0x01, 0x02, 0x02, 0x45, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x03, 0x26, 0x20, 0x01,
-            0x21, 0x44, 0x1a, 0x2b, 0x3c, 0x4d, 0x22, 0x44, 0x5e, 0x6f, 0x7a, 0x8b, 0xff,
-        ];
-
-        let response =
-            ResponseTemplate::new(200).set_body_raw(raw_response, DISCOVERY_DOCUMENT_CBOR);
+        let response = ResponseTemplate::new(200).set_body_raw(
+            SAMPLE_COSERV_DISCOVERY_DOCUMENT_CBOR_BYTES,
+            DISCOVERY_DOCUMENT_CBOR,
+        );
 
         Mock::given(method("GET"))
             .and(path("/.well-known/coserv-configuration"))
@@ -961,5 +962,136 @@ mod tests {
         // Light testing here - just check the version field
         // (The CoSERV DiscoveryDocument is not implemented in this crate, so we aren't testing that.)
         assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
+    }
+
+    #[async_std::test]
+    #[cfg(feature = "disk-caching")]
+    async fn discover_coserv_cbor_disk_cached_ok() {
+        // Make a temporary directory to use as the cache (will be deleted when dropped)
+        let cache_root = tempfile::tempdir().unwrap();
+        let cache_path: PathBuf = cache_root.path().into();
+
+        let mock_server = MockServer::start().await;
+
+        let response = ResponseTemplate::new(200)
+            .insert_header("Cache-Control", "max-age=3600")
+            .set_body_raw(
+                SAMPLE_COSERV_DISCOVERY_DOCUMENT_CBOR_BYTES,
+                DISCOVERY_DOCUMENT_CBOR,
+            );
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/coserv-configuration"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let discovery = DiscoveryBuilder::new()
+            .with_base_url(mock_server.uri())
+            .with_default_disk_cache(cache_path.clone())
+            .build()
+            .expect("Failed to create Discovery client.");
+
+        // We should have an empty cache before we run the first query
+        assert!(cache_path.read_dir().unwrap().next().is_none());
+
+        let coserv_dd = discovery
+            .get_coserv_discovery_document_cbor()
+            .await
+            .expect("Failed to get verification endpoint details.");
+
+        // Light testing here - just check the version field
+        // (The CoSERV DiscoveryDocument is not implemented in this crate, so we aren't testing that.)
+        assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
+
+        // Cache should now be non-empty
+        // (The structure of the cache is an implementation detail, but there must be SOMETHING in there.)
+        assert!(cache_path.read_dir().unwrap().next().is_some());
+
+        // Run a flurry of identical queries and assert a valid CoSERV result - these will be served from the cache
+        for _i in 1..1000 {
+            let coserv_dd = discovery
+                .get_coserv_discovery_document_cbor()
+                .await
+                .expect("Failed to get verification endpoint details.");
+
+            // Light testing here - just check the version field
+            // (The CoSERV DiscoveryDocument is not implemented in this crate, so we aren't testing that.)
+            assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
+        }
+
+        // Only the original request should have been received by the server, so
+        // assert that exactly one request was received.
+        assert_eq!(
+            mock_server
+                .received_requests()
+                .await
+                .unwrap_or(vec![])
+                .len(),
+            1
+        );
+    }
+
+    #[async_std::test]
+    #[cfg(feature = "memory-caching")]
+    async fn discover_coserv_cbor_memory_cached_ok() {
+        use http_cache_reqwest::MokaCache;
+
+        // Make the in-memory cache
+        let cache = MokaCache::new(10);
+        let cache_manager = MokaManager::new(cache);
+
+        let mock_server = MockServer::start().await;
+
+        let response = ResponseTemplate::new(200)
+            .insert_header("Cache-Control", "max-age=3600")
+            .set_body_raw(
+                SAMPLE_COSERV_DISCOVERY_DOCUMENT_CBOR_BYTES,
+                DISCOVERY_DOCUMENT_CBOR,
+            );
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/coserv-configuration"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let discovery = DiscoveryBuilder::new()
+            .with_base_url(mock_server.uri())
+            .with_memory_cache(cache_manager)
+            .build()
+            .expect("Failed to create Discovery client.");
+
+        let coserv_dd = discovery
+            .get_coserv_discovery_document_cbor()
+            .await
+            .expect("Failed to get verification endpoint details.");
+
+        // Light testing here - just check the version field
+        // (The CoSERV DiscoveryDocument is not implemented in this crate, so we aren't testing that.)
+        assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
+
+        // Run a flurry of identical queries and assert a valid CoSERV result - these will be served from the cache
+        for _i in 1..1000 {
+            let coserv_dd = discovery
+                .get_coserv_discovery_document_cbor()
+                .await
+                .expect("Failed to get verification endpoint details.");
+
+            // Light testing here - just check the version field
+            // (The CoSERV DiscoveryDocument is not implemented in this crate, so we aren't testing that.)
+            assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
+        }
+
+        // Only the original request should have been received by the server, so
+        // assert that exactly one request was received.
+        assert_eq!(
+            mock_server
+                .received_requests()
+                .await
+                .unwrap_or(vec![])
+                .len(),
+            1
+        );
     }
 }
