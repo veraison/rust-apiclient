@@ -1,27 +1,29 @@
-// Copyright 2022-2025 Contributors to the Veraison project.
+// Copyright 2022-2026 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
 #![allow(clippy::multiple_crate_versions)]
 
-use std::{fs::File, io::Read, path::PathBuf};
+use std::path::PathBuf;
 
 use ciborium::Value as CborValue;
-use http_cache_reqwest::{Cache, CacheMode, HttpCache, HttpCacheOptions};
+use http_cache_reqwest::{CacheMode, HttpCacheOptions};
 
-#[cfg(feature = "coserv-disk-caching")]
+#[cfg(feature = "disk-caching")]
 use http_cache_reqwest::CACacheManager;
 
-#[cfg(feature = "coserv-memory-caching")]
-use http_cache_reqwest::{MokaCache, MokaManager};
+#[cfg(feature = "memory-caching")]
+use http_cache_reqwest::MokaManager;
 
 use mediatype::{MediaType, Name, Value, WriteParams};
-use reqwest::{Certificate, ClientBuilder};
 
 use coserv_rs::coserv::{corim_rs::CoseVerifier, Coserv, CoservProfile};
 use uritemplate::UriTemplate;
 use url::Url;
 
-use crate::Error;
+use crate::{
+    http::{ConfigureHttp, HttpClientBuilder},
+    Error,
+};
 
 const UNSIGNED_COSERV_MEDIA_SUBTYPE: &str = "coserv+cbor";
 const SIGNED_COSERV_MEDIA_SUBTYPE: &str = "coserv+cose";
@@ -57,28 +59,16 @@ impl ConciseProblemDetails {
 
 /// A builder for [QueryRunner] objects
 pub struct QueryRunnerBuilder {
+    http_client_builder: HttpClientBuilder,
     request_response_url: Option<String>,
-    root_certificate: Option<PathBuf>,
-    #[cfg(feature = "coserv-disk-caching")]
-    disk_cache: Option<CACacheManager>,
-    #[cfg(feature = "coserv-memory-caching")]
-    memory_cache: Option<MokaManager>,
-    cache_mode: Option<CacheMode>,
-    http_cache_options: Option<HttpCacheOptions>,
 }
 
 impl QueryRunnerBuilder {
     /// default constructor
     pub fn new() -> Self {
         Self {
+            http_client_builder: HttpClientBuilder::new(),
             request_response_url: None,
-            root_certificate: None,
-            #[cfg(feature = "coserv-disk-caching")]
-            disk_cache: None,
-            #[cfg(feature = "coserv-memory-caching")]
-            memory_cache: None,
-            cache_mode: None,
-            http_cache_options: None,
         }
     }
 
@@ -86,79 +76,6 @@ impl QueryRunnerBuilder {
     /// "https://veraison.example/endorsement-distribution/v1/coserv/{query}".
     pub fn with_request_response_url(mut self, v: String) -> QueryRunnerBuilder {
         self.request_response_url = Some(v);
-        self
-    }
-
-    /// Use this method to add a custom root certificate.  For example, this can be used to connect
-    /// to a server whose certificate is signed by a CA which is not present in (and does not need to be added to)
-    /// the system's trust anchor store.
-    pub fn with_root_certificate(mut self, v: PathBuf) -> QueryRunnerBuilder {
-        self.root_certificate = Some(v);
-        self
-    }
-
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local disk storage.
-    /// Pass in the path to the folder on the local system that should be used for the cache.
-    /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
-    /// NOTE: This is a convenience method. It is functionally equivalent to [QueryRunnerBuilder::with_disk_cache],
-    /// but avoids the need for the caller to construct the full cache manager object. The caller only supplies the file path.
-    #[cfg(feature = "coserv-disk-caching")]
-    pub fn with_default_disk_cache(self, v: PathBuf) -> QueryRunnerBuilder {
-        self.with_disk_cache(CACacheManager::new(v, true))
-    }
-
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local disk storage.
-    /// Pass in the path to the folder on the local system that should be used for the cache.
-    /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
-    #[cfg(feature = "coserv-disk-caching")]
-    pub fn with_disk_cache(mut self, v: CACacheManager) -> QueryRunnerBuilder {
-        self.disk_cache = Some(v);
-        self
-    }
-
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local memory.
-    /// In-memory caching is implemented using [http_cache_reqwest::MokaManager].
-    /// This default option will create the cache manager automatically, with capacity for the given number of entries.
-    /// For finer control of the cache behaviour, the caller can construct a custom cache manager and configure it
-    /// with [QueryRunnerBuilder::with_memory_cache].
-    /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
-    /// NOTE: This is a convenience method. It is functionally equivalent to [QueryRunnerBuilder::with_memory_cache],
-    /// but avoids the need for the caller to construct the full cache manager object.
-    #[cfg(feature = "coserv-memory-caching")]
-    pub fn with_default_memory_cache(self, v: u64) -> QueryRunnerBuilder {
-        self.with_memory_cache(MokaManager::new(MokaCache::new(v)))
-    }
-
-    /// Use this method to build a [QueryRunner] with client-side caching enabled using local memory.
-    /// In-memory caching is implemented using [http_cache_reqwest::MokaManager], which the caller must configure.
-    /// Default caching mode and options will also be applied.
-    /// You may override these by calling [QueryRunnerBuilder::with_cache_mode] and/or
-    /// [QueryRunnerBuilder::with_http_cache_options] during the build.
-    #[cfg(feature = "coserv-memory-caching")]
-    pub fn with_memory_cache(mut self, v: MokaManager) -> QueryRunnerBuilder {
-        self.memory_cache = Some(v);
-        self
-    }
-
-    /// Use this method to override the default cache mode.
-    /// NOTE: This method is only effective in combination with [QueryRunnerBuilder::with_disk_cache] or
-    /// [QueryRunnerBuilder::with_memory_cache].
-    pub fn with_cache_mode(mut self, v: CacheMode) -> QueryRunnerBuilder {
-        self.cache_mode = Some(v);
-        self
-    }
-
-    /// Use this method to override the default HTTP caching options.
-    /// NOTE: This method is only effective in combination with [QueryRunnerBuilder::with_disk_cache] or
-    /// [QueryRunnerBuilder::with_memory_cache].
-    pub fn with_http_cache_options(mut self, v: HttpCacheOptions) -> QueryRunnerBuilder {
-        self.http_cache_options = Some(v);
         self
     }
 
@@ -180,49 +97,42 @@ impl QueryRunnerBuilder {
             )));
         }
 
-        let mut http_client_builder: ClientBuilder = reqwest::ClientBuilder::new();
-
-        if let Some(root_cert) = self.root_certificate {
-            let mut buf = Vec::new();
-            File::open(root_cert)?.read_to_end(&mut buf)?;
-            let cert = Certificate::from_pem(&buf)?;
-            http_client_builder = http_client_builder.add_root_certificate(cert);
-        }
-
-        let http_client = http_client_builder.use_rustls_tls().build()?;
-
-        // Now add any required middleware to the client
-        let mut middleware_builder = reqwest_middleware::ClientBuilder::new(http_client);
-
-        // Add memory caching middleware if configured
-        #[cfg(feature = "coserv-memory-caching")]
-        if let Some(moka_mgr) = self.memory_cache {
-            let options = self.http_cache_options.clone().unwrap_or_default();
-            middleware_builder = middleware_builder.with(Cache(HttpCache {
-                mode: self.cache_mode.unwrap_or(CacheMode::Default),
-                manager: moka_mgr,
-                options,
-            }))
-        }
-
-        // Add disk caching middleware if configured (via a root path for the cache)
-        #[cfg(feature = "coserv-disk-caching")]
-        if let Some(ca_mgr) = self.disk_cache {
-            let options = self.http_cache_options.clone().unwrap_or_default();
-            middleware_builder = middleware_builder.with(Cache(HttpCache {
-                mode: self.cache_mode.unwrap_or(CacheMode::Default),
-                manager: ca_mgr,
-                options,
-            }))
-        }
-
         // Use the middleware client as the client in the QueryRunner
-        let client_with_middleware = middleware_builder.build();
+        let client_with_middleware = self.http_client_builder.build()?;
 
         Ok(QueryRunner {
             request_response_url_template: request_response_url_str.to_string(),
             http_client: client_with_middleware,
         })
+    }
+}
+
+impl ConfigureHttp for QueryRunnerBuilder {
+    fn with_root_certificate(mut self, v: PathBuf) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.with_root_certificate(v);
+        self
+    }
+
+    #[cfg(feature = "disk-caching")]
+    fn with_disk_cache(mut self, v: CACacheManager) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.with_disk_cache(v);
+        self
+    }
+
+    #[cfg(feature = "memory-caching")]
+    fn with_memory_cache(mut self, v: MokaManager) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.with_memory_cache(v);
+        self
+    }
+
+    fn with_cache_mode(mut self, v: CacheMode) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.with_cache_mode(v);
+        self
+    }
+
+    fn with_http_cache_options(mut self, v: HttpCacheOptions) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.with_http_cache_options(v);
+        self
     }
 }
 
@@ -521,7 +431,7 @@ mod tests {
     }
 
     #[async_std::test]
-    #[cfg(feature = "coserv-disk-caching")]
+    #[cfg(feature = "disk-caching")]
     async fn execute_query_disk_cached_okay() {
         // Make a temporary directory to use as the cache (will be deleted when dropped)
         let cache_root = tempfile::tempdir().unwrap();
@@ -589,8 +499,10 @@ mod tests {
     }
 
     #[async_std::test]
-    #[cfg(feature = "coserv-memory-caching")]
+    #[cfg(feature = "memory-caching")]
     async fn execute_query_memory_cached_okay() {
+        use http_cache_reqwest::MokaCache;
+
         // Make the in-memory cache
         let cache = MokaCache::new(10);
         let cache_manager = MokaManager::new(cache);

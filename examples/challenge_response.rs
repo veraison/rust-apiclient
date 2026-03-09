@@ -1,9 +1,9 @@
-// Copyright 2022 Contributors to the Veraison project.
+// Copyright 2022-2026 Contributors to the Veraison project.
 // SPDX-License-Identifier: Apache-2.0
 
 extern crate veraison_apiclient;
 
-use veraison_apiclient::*;
+use veraison_apiclient::{http::ConfigureHttp, *};
 
 fn my_evidence_builder(
     nonce: &[u8],

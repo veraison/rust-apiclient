@@ -28,8 +28,8 @@ mediatype = "0.21.0"
 uritemplate-next = "0.2.0"
 
 [features]
-coserv-memory-caching = [ "http-cache-reqwest/manager-moka" ]
-coserv-disk-caching = [ "http-cache-reqwest/manager-cacache" ]
+memory-caching = [ "http-cache-reqwest/manager-moka" ]
+disk-caching = [ "http-cache-reqwest/manager-cacache" ]
 
 [dependencies.serde_with]
 version = "3.14.0"
