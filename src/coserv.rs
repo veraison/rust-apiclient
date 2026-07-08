@@ -288,8 +288,8 @@ mod tests {
     use super::*;
     use coserv_rs::coserv::corim_rs::CorimError;
     use coserv_rs::coserv::{
-        ArtifactTypeChoice, CoseAlgorithm, CoseKey, CoseKeyOwner, CoseSigner, ResultSetTypeChoice,
-        ResultTypeChoice,
+        ArtifactTypeChoice, CoseAlgorithm, CoseKey, CoseKeyOwner, CoseSigner, CoservQuery,
+        ResultSetTypeChoice, ResultTypeChoice,
     };
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -338,14 +338,12 @@ mod tests {
             CoservProfile::Uri("tag:example.com,2025:cc-platform#1.0.0".to_string()),
             coserv_out.profile
         );
-        assert_eq!(
-            ArtifactTypeChoice::ReferenceValues,
-            coserv_out.query.artifact_type
-        );
-        assert_eq!(
-            ResultTypeChoice::CollectedArtifacts,
-            coserv_out.query.result_type
-        );
+
+        let CoservQuery::EnvQuery(query) = coserv_out.query else {
+            panic!("query is not an environment query")
+        };
+        assert_eq!(ArtifactTypeChoice::ReferenceValues, query.artifact_type);
+        assert_eq!(ResultTypeChoice::CollectedArtifacts, query.result_type);
 
         let results = coserv_out.results.unwrap();
         assert_eq!(None, results.source_artifacts);
