@@ -5,7 +5,10 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use http_cache_reqwest::{Cache, CacheMode, HttpCache, HttpCacheOptions};
+use http_cache_reqwest::{CacheMode, HttpCacheOptions};
+
+#[cfg(any(feature = "disk-caching", feature = "memory-caching"))]
+use http_cache_reqwest::{Cache, HttpCache};
 
 #[cfg(feature = "disk-caching")]
 use http_cache_reqwest::CACacheManager;
@@ -157,6 +160,7 @@ impl HttpClientBuilder {
         let http_client = http_client_builder.use_rustls_tls().build()?;
 
         // Now add any required middleware to the client
+        #[allow(unused_mut)]
         let mut middleware_builder = reqwest_middleware::ClientBuilder::new(http_client);
 
         // Add memory caching middleware if configured
