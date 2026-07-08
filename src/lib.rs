@@ -409,8 +409,7 @@ pub struct VerificationApi {
 /// A builder for Discovery objects
 pub struct DiscoveryBuilder {
     http_client_builder: HttpClientBuilder,
-    verification_url: Option<String>,
-    coserv_url: Option<String>,
+    base_url: Option<String>,
 }
 
 impl DiscoveryBuilder {
@@ -418,8 +417,7 @@ impl DiscoveryBuilder {
     pub fn new() -> Self {
         Self {
             http_client_builder: HttpClientBuilder::new(),
-            verification_url: None,
-            coserv_url: None,
+            base_url: None,
         }
     }
 
@@ -427,36 +425,44 @@ impl DiscoveryBuilder {
     /// "https://veraison.example" in the full
     /// "https://veraison.example/.well-known/veraison/verification".
     /// This hides / encapsulate the details of what the actual URL looks like.
+    /// The base URL must have empty path segment, e.g. "https://veraison.example"
+    /// or "https://veraison.example/" but not "https://veraison.example/foo".
     pub fn with_base_url(mut self, base_url: String) -> DiscoveryBuilder {
-        self.verification_url = Some(format!(
-            "{}{}",
-            base_url, "/.well-known/veraison/verification"
-        ));
-        self.coserv_url = Some(format!(
-            "{}{}",
-            base_url, "/.well-known/coserv-configuration"
-        ));
+        self.base_url = Some(base_url);
         self
     }
 
     /// Instantiate a valid Discovery object, or fail with an error.
     pub fn build(self) -> Result<Discovery, Error> {
-        let verification_url = self
-            .verification_url
-            .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
+        let Some(base_url) = &self.base_url else {
+            return Err(Error::ConfigError("missing API endpoint".to_string()));
+        };
+        let base_url = url::Url::parse(base_url)
+            .map_err(|e| Error::ConfigError(format!("could not parse URL: {e}")))?;
 
-        let coserv_url = self
-            .coserv_url
-            .ok_or_else(|| Error::ConfigError("missing API endpoint".to_string()))?;
+        // check if URL is a base url
+        // note: if cannot_be_a_base is false, path always starts
+        // with '/'. Since we need path segments to be empty, it
+        // should be "/"
+        if base_url.cannot_be_a_base() || base_url.path() != "/" {
+            return Err(Error::ConfigError(format!(
+                "URL is not a base URL {base_url}"
+            )));
+        }
+
+        // since paths are compile time constants, these will always be Ok(_)
+        let verification_url = base_url
+            .join("/.well-known/veraison/verification")
+            .expect("failed to join path fragment with base URL");
+        let coserv_url = base_url
+            .join("/.well-known/coserv-configuration")
+            .expect("failed to join path fragment with base URL");
 
         let http_client = self.http_client_builder.build()?;
-
         Ok(Discovery {
-            verification_url: url::Url::parse(&verification_url)
-                .map_err(|e| Error::ConfigError(e.to_string()))?,
-            coserv_url: url::Url::parse(&coserv_url)
-                .map_err(|e| Error::ConfigError(e.to_string()))?,
             http_client,
+            verification_url,
+            coserv_url,
         })
     }
 }
@@ -795,6 +801,40 @@ mod tests {
 
         // Expect we are given the expected attestation result
         assert_eq!(rv, attestation_result)
+    }
+
+    #[test]
+    fn discovery_builder_ok() {
+        let base_urls = [
+            (
+                "https://a.b.c",
+                "https://a.b.c/.well-known/veraison/verification",
+                "https://a.b.c/.well-known/coserv-configuration",
+            ),
+            (
+                "http://a",
+                "http://a/.well-known/veraison/verification",
+                "http://a/.well-known/coserv-configuration",
+            ),
+            (
+                "https://a.b:42/",
+                "https://a.b:42/.well-known/veraison/verification",
+                "https://a.b:42/.well-known/coserv-configuration",
+            ),
+        ];
+        for &(b, v, c) in base_urls.iter() {
+            let res = DiscoveryBuilder::new().with_base_url(b.to_owned()).build();
+            assert!(res.is_ok(), "failed to create discovery with base {b}",);
+            let disc = res.unwrap();
+            assert_eq!(disc.coserv_url, url::Url::parse(c).unwrap());
+            assert_eq!(disc.verification_url, url::Url::parse(v).unwrap());
+        }
+
+        let not_base_urls = ["https://a/b/c", "https://a.b/c"];
+        for &u in not_base_urls.iter() {
+            let res = DiscoveryBuilder::new().with_base_url(u.to_owned()).build();
+            assert!(matches!(res, Err(Error::ConfigError(_))))
+        }
     }
 
     #[async_std::test]
