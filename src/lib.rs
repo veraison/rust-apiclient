@@ -80,13 +80,6 @@ impl std::fmt::Debug for Error {
     }
 }
 
-/// EvidenceCreationCb is the function signature of the application callback.
-/// The application is passed the session nonce and the list of supported
-/// evidence media types and shall return the computed evidence together with
-/// the selected media type.
-type EvidenceCreationCb =
-    fn(nonce: &[u8], accepted: &[String], token: Vec<u8>) -> Result<(Vec<u8>, String), Error>;
-
 /// A builder for ChallengeResponse objects
 pub struct ChallengeResponseBuilder {
     http_client_builder: HttpClientBuilder,
@@ -180,12 +173,25 @@ impl ChallengeResponse {
     /// Run a challenge-response verification session using the supplied nonce
     /// configuration and evidence creation callback. Returns the raw attestation results, or an
     /// error on failure.
-    pub async fn run(
+    ///
+    /// EvidenceCreationCb is the function signature of the application callback.
+    /// The application is passed the session nonce and the list of supported
+    /// evidence media types and shall return the computed evidence together with
+    /// the selected media type.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `EvidenceCreationCb` — called once with `(nonce: &[u8], accepted: &[String], token: Vec<u8>)`;
+    ///   returns the evidence bytes and the chosen media type, or an error.
+    pub async fn run<EvidenceCreationCb>(
         &self,
         nonce: Nonce,
         evidence_creation_cb: EvidenceCreationCb,
         token: Vec<u8>,
-    ) -> Result<String, Error> {
+    ) -> Result<String, Error>
+    where
+        EvidenceCreationCb: FnOnce(&[u8], &[String], Vec<u8>) -> Result<(Vec<u8>, String), Error>,
+    {
         // create new c/r verification session on the veraison side
         let (session_url, session) = self.new_session(&nonce).await?;
 
