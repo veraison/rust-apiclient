@@ -22,7 +22,7 @@ serde = "1.0.216"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 jsonwebkey = { version = "0.3.5", features = ["pkcs-convert"] }
 tokio = { version = "1.43.0", features = ["full"] }
-coserv-rs = { git = "https://github.com/veraison/coserv-rs.git" }
+coserv-rs = { git = "https://github.com/veraison/coserv-rs.git", rev = "15121e8" }
 ciborium = { version = "^0.2" }
 mediatype = "0.21.0"
 uritemplate-next = "0.2.0"
