@@ -3,7 +3,7 @@
 
 #![allow(clippy::multiple_crate_versions)]
 
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{fs::File, io::Read, path::PathBuf, time::Duration};
 
 use http_cache_reqwest::{CacheMode, HttpCacheOptions};
 
@@ -18,15 +18,63 @@ use http_cache_reqwest::{MokaCache, MokaManager};
 
 use reqwest::{Certificate, ClientBuilder};
 
-use reqwest_middleware::ClientWithMiddleware;
+use http::Extensions;
+use reqwest_middleware::Result as MiddlewareResult;
+use reqwest_middleware::{ClientWithMiddleware, Middleware, Next};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::Error;
+use crate::{
+    auth::{Authenticator, NullAuthenticator},
+    Error,
+};
+
+/// Timeout applied to every HTTP request unless overridden with [ConfigureHttp::with_timeout].
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+
+struct AuthenticationMiddleware {
+    authenticator: Arc<Mutex<Box<dyn Authenticator + Send>>>,
+}
+
+#[async_trait::async_trait]
+impl Middleware for AuthenticationMiddleware {
+    async fn handle(
+        &self,
+        mut request: reqwest::Request,
+        extensions: &mut Extensions,
+        next: Next<'_>,
+    ) -> MiddlewareResult<reqwest::Response> {
+        let header = self
+            .authenticator
+            .lock()
+            .await
+            .encode_header()
+            .await
+            .map_err(reqwest_middleware::Error::middleware)?;
+
+        if !header.is_empty() {
+            request.headers_mut().insert(
+                reqwest::header::AUTHORIZATION,
+                header
+                    .parse::<reqwest::header::HeaderValue>()
+                    .map_err(|error| {
+                        reqwest_middleware::Error::middleware(std::io::Error::other(
+                            error.to_string(),
+                        ))
+                    })?,
+            );
+        }
+
+        next.run(request, extensions).await
+    }
+}
 
 /// This trait is shared and implemented by all "Builder" objects that include an HTTP client.
 pub trait ConfigureHttp: Sized {
     /// Use this method to add a custom root certificate.  For example, this can be used to connect
     /// to a server whose certificate is signed by a CA which is not present in (and does not need to be added to)
-    /// the system's trust anchor store.
+    /// the system's trust anchor store. This method may be called multiple times to add several
+    /// root certificates.
     fn with_root_certificate(self, v: PathBuf) -> Self;
 
     /// Use this method to bypass certificate validation.
@@ -84,13 +132,19 @@ pub trait ConfigureHttp: Sized {
     /// NOTE: This method is only effective in combination with [ConfigureHttp::with_disk_cache] or
     /// [ConfigureHttp::with_memory_cache].
     fn with_http_cache_options(self, v: HttpCacheOptions) -> Self;
+
+    /// Use this method to override the timeout applied to every request made by the client,
+    /// which defaults to [DEFAULT_TIMEOUT]. The timeout covers the whole request, from
+    /// connecting until the response body has been read.
+    fn with_timeout(self, v: Duration) -> Self;
 }
 
 /// A common builder for all HTTP client objects used in this crate.
 /// The common builder allows for the configuration of custom TLS root certificates along with
-/// middleware layers for client-side caching.
+/// middleware layers for client-side caching and authentication.
 pub(crate) struct HttpClientBuilder {
-    root_certificate: Option<PathBuf>,
+    authenticator: Box<dyn Authenticator + Send>,
+    root_certificates: Vec<PathBuf>,
     no_check_certificate: bool,
     #[cfg(feature = "disk-caching")]
     disk_cache: Option<CACacheManager>,
@@ -98,11 +152,12 @@ pub(crate) struct HttpClientBuilder {
     memory_cache: Option<MokaManager>,
     cache_mode: Option<CacheMode>,
     http_cache_options: Option<HttpCacheOptions>,
+    timeout: Duration,
 }
 
 impl ConfigureHttp for HttpClientBuilder {
     fn with_root_certificate(mut self, v: PathBuf) -> HttpClientBuilder {
-        self.root_certificate = Some(v);
+        self.root_certificates.push(v);
         self
     }
 
@@ -132,13 +187,19 @@ impl ConfigureHttp for HttpClientBuilder {
         self.http_cache_options = Some(v);
         self
     }
+
+    fn with_timeout(mut self, v: Duration) -> HttpClientBuilder {
+        self.timeout = v;
+        self
+    }
 }
 
 impl HttpClientBuilder {
     /// default constructor
     pub fn new() -> Self {
         Self {
-            root_certificate: None,
+            authenticator: Box::new(NullAuthenticator),
+            root_certificates: Vec::new(),
             no_check_certificate: false,
             #[cfg(feature = "disk-caching")]
             disk_cache: None,
@@ -146,7 +207,16 @@ impl HttpClientBuilder {
             memory_cache: None,
             cache_mode: None,
             http_cache_options: None,
+            timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    pub fn with_authenticator<A>(mut self, authenticator: A) -> Self
+    where
+        A: Authenticator + Send + 'static,
+    {
+        self.authenticator = Box::new(authenticator);
+        self
     }
 
     /// Instantiate the client with the desired configuration.
@@ -155,18 +225,35 @@ impl HttpClientBuilder {
 
         if self.no_check_certificate {
             http_client_builder = http_client_builder.tls_danger_accept_invalid_certs(true);
-        } else if let Some(root_cert) = self.root_certificate {
-            let mut buf = Vec::new();
-            File::open(root_cert)?.read_to_end(&mut buf)?;
-            let cert = Certificate::from_pem(&buf)?;
-            http_client_builder = http_client_builder.add_root_certificate(cert)
+        } else {
+            for root_cert in self.root_certificates {
+                let mut buf = Vec::new();
+                File::open(&root_cert)?.read_to_end(&mut buf)?;
+                let certs = Certificate::from_pem_bundle(&buf)?;
+                if certs.is_empty() {
+                    return Err(Error::ConfigError(format!(
+                        "no certificates found in {:?}",
+                        root_cert
+                    )));
+                }
+                http_client_builder = http_client_builder.tls_certs_merge(certs);
+            }
         }
 
-        let http_client = http_client_builder.use_rustls_tls().build()?;
+        let http_client = http_client_builder
+            .use_rustls_tls()
+            .timeout(self.timeout)
+            .build()?;
 
         // Now add any required middleware to the client
+        // Authentication runs before caching so authenticated requests are cached consistently.
+        let authentication = AuthenticationMiddleware {
+            authenticator: Arc::new(Mutex::new(self.authenticator)),
+        };
+
         #[allow(unused_mut)]
-        let mut middleware_builder = reqwest_middleware::ClientBuilder::new(http_client);
+        let mut middleware_builder =
+            reqwest_middleware::ClientBuilder::new(http_client).with(authentication);
 
         // Add memory caching middleware if configured
         #[cfg(feature = "memory-caching")]
@@ -197,5 +284,22 @@ impl HttpClientBuilder {
 impl Default for HttpClientBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_defaults_to_15_seconds_and_is_configurable() {
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(15));
+        assert_eq!(HttpClientBuilder::new().timeout, DEFAULT_TIMEOUT);
+        assert_eq!(
+            HttpClientBuilder::new()
+                .with_timeout(Duration::from_secs(60))
+                .timeout,
+            Duration::from_secs(60)
+        );
     }
 }

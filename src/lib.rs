@@ -3,7 +3,7 @@
 
 #![allow(clippy::multiple_crate_versions)]
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
@@ -20,8 +20,10 @@ use reqwest_middleware::ClientWithMiddleware;
 
 use crate::http::{ConfigureHttp, HttpClientBuilder};
 
+pub mod auth;
 pub mod coserv;
 pub mod http;
+pub mod management;
 
 #[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -41,15 +43,25 @@ pub enum Error {
 
 // While for other error sources the mapping may be more subtle, all reqwest
 // errors are bottled as ApiErrors.
+// reqwest reports a timeout only as e.g. "error sending request for url (...)", so the cause
+// is made explicit.
 impl From<reqwest::Error> for Error {
     fn from(re: reqwest::Error) -> Self {
-        Error::ApiError(re.to_string())
+        if re.is_timeout() {
+            Error::ApiError(format!("request timed out: {re}"))
+        } else {
+            Error::ApiError(re.to_string())
+        }
     }
 }
 
 impl From<reqwest_middleware::Error> for Error {
     fn from(re: reqwest_middleware::Error) -> Self {
-        Error::ApiError(re.to_string())
+        if re.is_timeout() {
+            Error::ApiError(format!("request timed out: {re}"))
+        } else {
+            Error::ApiError(re.to_string())
+        }
     }
 }
 
@@ -149,6 +161,11 @@ impl ConfigureHttp for ChallengeResponseBuilder {
 
     fn with_http_cache_options(mut self, v: HttpCacheOptions) -> ChallengeResponseBuilder {
         self.http_client_builder = self.http_client_builder.with_http_cache_options(v);
+        self
+    }
+
+    fn with_timeout(mut self, v: Duration) -> ChallengeResponseBuilder {
+        self.http_client_builder = self.http_client_builder.with_timeout(v);
         self
     }
 }
@@ -470,12 +487,16 @@ impl DiscoveryBuilder {
         let coserv_url = base_url
             .join("/.well-known/coserv-configuration")
             .expect("failed to join path fragment with base URL");
+        let management_url = base_url
+            .join("/.well-known/veraison/management")
+            .expect("failed to join path fragement with base URL");
 
         let http_client = self.http_client_builder.build()?;
         Ok(Discovery {
             http_client,
             verification_url,
             coserv_url,
+            management_url,
         })
     }
 }
@@ -510,6 +531,11 @@ impl ConfigureHttp for DiscoveryBuilder {
 
     fn with_http_cache_options(mut self, v: HttpCacheOptions) -> DiscoveryBuilder {
         self.http_client_builder = self.http_client_builder.with_http_cache_options(v);
+        self
+    }
+
+    fn with_timeout(mut self, v: Duration) -> DiscoveryBuilder {
+        self.http_client_builder = self.http_client_builder.with_timeout(v);
         self
     }
 }
@@ -593,6 +619,89 @@ impl VerificationApi {
     }
 }
 
+/// This object models the state and capabilities of the management API in the Veraison service.
+///
+/// An instance of this struct is returned from [`Discovery::get_management_api()`].
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct ManagementApi {
+    attestation_schemes: Vec<String>,
+    version: String,
+    service_state: ServiceState,
+    api_endpoints: std::collections::HashMap<String, String>,
+}
+
+/// A management API endpoint name known to this client.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ManagementEndpoint {
+    CreatePolicy,
+    GetPolicy,
+    GetPolicies,
+    GetActivePolicy,
+    ActivatePolicy,
+    DeactivatePolicies,
+}
+
+impl ManagementEndpoint {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::CreatePolicy => "createPolicy",
+            Self::GetPolicy => "getPolicy",
+            Self::GetPolicies => "getPolicies",
+            Self::GetActivePolicy => "getActivePolicy",
+            Self::ActivatePolicy => "activatePolicy",
+            Self::DeactivatePolicies => "deactivatePolicies",
+        }
+    }
+}
+
+impl AsRef<str> for ManagementEndpoint {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl ManagementApi {
+    /// Obtains the strings for the set of attestation schemes that are supported for policy
+    /// submission. Each member of the array will be a attestation scheme string such as
+    /// `"ARM_CCA"`.
+    pub fn attestation_schemes(&self) -> &[String] {
+        self.attestation_schemes.as_ref()
+    }
+
+    /// Obtains the version of the service.
+    pub fn version(&self) -> &str {
+        self.version.as_ref()
+    }
+
+    /// Indicates whether the service is starting, ready, terminating or down.
+    pub fn service_state(&self) -> &ServiceState {
+        &self.service_state
+    }
+
+    /// Gets an API endpoint by a known typed endpoint or an arbitrary endpoint name.
+    ///
+    /// Passing a [`ManagementEndpoint`] avoids typos for endpoint names known to this client.
+    /// Passing a string allows lookup of endpoints added by future server versions; arbitrary
+    /// strings are not validated against known endpoint names.
+    ///
+    /// Returns `None` if the management server does not publish the requested endpoint.
+    pub fn get_api_endpoint(&self, name: impl AsRef<str>) -> Option<String> {
+        self.api_endpoints.get(name.as_ref()).cloned()
+    }
+
+    /// Gets all of the API endpoints published by this management service as a vector of
+    /// string pairs.
+    ///
+    /// For each endpoint entry, the first member of the pair is the endpoint name, such
+    /// as `"activatePolicy"`, and the second member is the corresponding
+    /// relative URL, such as `"/management/v1/policy/:scheme"`.
+    pub fn get_all_api_endpoints(&self) -> Vec<(&String, &String)> {
+        self.api_endpoints.iter().collect()
+    }
+}
+
 /// This structure allows Veraison endpoints and service capabilities to be discovered
 /// dynamically.
 ///
@@ -602,6 +711,7 @@ pub struct Discovery {
     verification_url: url::Url,
     coserv_url: url::Url,
     http_client: ClientWithMiddleware,
+    management_url: url::Url,
 }
 
 impl Discovery {
@@ -665,6 +775,30 @@ impl Discovery {
                 "Failed to discover CoSERV endpoint information (CBOR format).",
             ))),
         }
+    }
+
+    /// Obtains the capabilities and endpoints of the Veraison management service.
+    pub async fn get_management_api(&self) -> Result<ManagementApi, Error> {
+        let response = self
+            .http_client
+            .get(self.management_url.as_str())
+            .header(reqwest::header::ACCEPT, DISCOVERY_MEDIA_TYPE)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status != reqwest::StatusCode::OK {
+            let body = response.text().await.unwrap_or_default();
+            let detail = if body.is_empty() {
+                String::new()
+            } else {
+                format!(": {body}")
+            };
+            return Err(Error::ApiError(format!(
+                "Failed to discover management endpoint information: HTTP {status}{detail}"
+            )));
+        }
+        Ok(response.json::<ManagementApi>().await?)
     }
 }
 
@@ -858,24 +992,28 @@ mod tests {
                 "https://a.b.c",
                 "https://a.b.c/.well-known/veraison/verification",
                 "https://a.b.c/.well-known/coserv-configuration",
+                "https://a.b.c/.well-known/veraison/management",
             ),
             (
                 "http://a",
                 "http://a/.well-known/veraison/verification",
                 "http://a/.well-known/coserv-configuration",
+                "http://a/.well-known/veraison/management",
             ),
             (
                 "https://a.b:42/",
                 "https://a.b:42/.well-known/veraison/verification",
                 "https://a.b:42/.well-known/coserv-configuration",
+                "https://a.b:42/.well-known/veraison/management",
             ),
         ];
-        for &(b, v, c) in base_urls.iter() {
+        for &(b, v, c, m) in base_urls.iter() {
             let res = DiscoveryBuilder::new().with_base_url(b.to_owned()).build();
             assert!(res.is_ok(), "failed to create discovery with base {b}",);
             let disc = res.unwrap();
             assert_eq!(disc.coserv_url, url::Url::parse(c).unwrap());
             assert_eq!(disc.verification_url, url::Url::parse(v).unwrap());
+            assert_eq!(disc.management_url, url::Url::parse(m).unwrap());
         }
 
         let not_base_urls = ["https://a/b/c", "https://a.b/c"];
@@ -962,6 +1100,99 @@ mod tests {
                 .api_endpoints
                 .get("newChallengeResponseSession"),
             Some(&String::from("/challenge-response/v1/newSession"))
+        );
+    }
+
+    #[async_std::test]
+    async fn discover_management_ok() {
+        let mock_server = MockServer::start().await;
+
+        // Sample response.
+        let raw_response = r#"
+        {
+            "attestation-schemes": [
+                "ARM_CCA",
+                "PARSEC_CCA",
+                "PARSEC_TPM",
+                "PSA_IOT",
+                "RIOT",
+                "SEVSNP",
+                "TPM_ENACTTRUST"
+            ],
+            "version": "0.0.2608+6fbd4b8",
+            "service-state": "READY",
+            "api-endpoints": {
+                "activatePolicy": "/management/v1/policy/:scheme/:uuid/activate",
+                "createPolicy": "/management/v1/policy/:scheme",
+                "deactivatePolicies": "/management/v1/policies/:scheme/deactivate",
+                "getActivePolicy": "/management/v1/policy/:scheme",
+                "getPolicies": "/management/v1/policies/:scheme",
+                "getPolicy": "/management/v1/policy/:scheme/:uuid"
+            }
+        }"#;
+
+        let response = ResponseTemplate::new(200)
+            .set_body_raw(raw_response, "application/vnd.veraison.discovery+json");
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/veraison/management"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let discovery = DiscoveryBuilder::new()
+            .with_base_url(mock_server.uri())
+            .build()
+            .expect("Failed to create Discovery client.");
+
+        let management_api = discovery
+            .get_management_api()
+            .await
+            .expect("Failed to get management endpoint details.");
+
+        // Check that we've pulled and deserialized everything that we expect
+        assert_eq!(management_api.service_state, ServiceState::Ready);
+        assert_eq!(management_api.version, String::from("0.0.2608+6fbd4b8"));
+        assert_eq!(management_api.attestation_schemes.len(), 7);
+        assert_eq!(
+            management_api.attestation_schemes[0],
+            String::from("ARM_CCA")
+        );
+        assert_eq!(management_api.api_endpoints.len(), 6);
+        assert_eq!(
+            management_api.api_endpoints.get("activatePolicy"),
+            Some(&String::from(
+                "/management/v1/policy/:scheme/:uuid/activate"
+            ))
+        );
+    }
+
+    #[test]
+    fn management_endpoint_lookup_supports_known_and_unknown_names() {
+        let api = ManagementApi {
+            attestation_schemes: Vec::new(),
+            version: String::new(),
+            service_state: ServiceState::Ready,
+            api_endpoints: std::collections::HashMap::from([
+                (
+                    "getPolicies".to_string(),
+                    "/management/v1/policies/:scheme".to_string(),
+                ),
+                (
+                    "futureEndpoint".to_string(),
+                    "/management/v2/future".to_string(),
+                ),
+            ]),
+        };
+
+        assert_eq!(
+            api.get_api_endpoint(ManagementEndpoint::GetPolicies),
+            Some("/management/v1/policies/:scheme".to_string())
+        );
+        assert_eq!(api.get_api_endpoint(ManagementEndpoint::CreatePolicy), None);
+        assert_eq!(
+            api.get_api_endpoint("futureEndpoint"),
+            Some("/management/v2/future".to_string())
         );
     }
 
@@ -1180,6 +1411,59 @@ mod tests {
                 .unwrap_or(vec![])
                 .len(),
             1
+        );
+    }
+
+    /// A mock server whose every response is delayed well beyond the timeouts used in tests.
+    async fn slow_server() -> MockServer {
+        let mock_server = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5)))
+            .mount(&mock_server)
+            .await;
+        mock_server
+    }
+
+    #[async_std::test]
+    async fn discovery_request_times_out() {
+        let mock_server = slow_server().await;
+        let discovery = DiscoveryBuilder::new()
+            .with_base_url(mock_server.uri())
+            .with_timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+
+        let Err(error) = discovery.get_verification_api().await else {
+            panic!("discovery should have timed out");
+        };
+        assert!(
+            error
+                .to_string()
+                .starts_with("API error: request timed out"),
+            "{error}"
+        );
+    }
+
+    #[async_std::test]
+    async fn challenge_response_request_times_out() {
+        let mock_server = slow_server().await;
+        let cr = ChallengeResponseBuilder::new()
+            .with_new_session_url(format!(
+                "{}/challenge-response/v1/newSession",
+                mock_server.uri()
+            ))
+            .with_timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+
+        let Err(error) = cr.new_session(&Nonce::Size(32)).await else {
+            panic!("new session request should have timed out");
+        };
+        assert!(
+            error
+                .to_string()
+                .starts_with("API error: request timed out"),
+            "{error}"
         );
     }
 }
