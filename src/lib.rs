@@ -361,7 +361,9 @@ const DISCOVERY_MEDIA_TYPE: &str = "application/vnd.veraison.discovery+json";
 #[serde_with::skip_serializing_none]
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct ChallengeResponseSession {
-    #[serde_as(as = "serde_with::base64::Base64")]
+    #[serde_as(
+        as = "serde_with::base64::Base64<serde_with::base64::UrlSafe, serde_with::formats::Unpadded>"
+    )]
     nonce: Vec<u8>,
     #[serde_as(as = "chrono::DateTime<chrono::Utc>")]
     expiry: chrono::NaiveDateTime,
@@ -764,6 +766,36 @@ mod tests {
 
         // Expect we are given the expected location URL
         assert_eq!(rv.0, format!("{}/1234", mock_server.uri()));
+    }
+
+    #[async_std::test]
+    async fn new_session_decodes_unpadded_base64url_nonce() {
+        let mock_server = MockServer::start().await;
+        let response = ResponseTemplate::new(201)
+            .insert_header("location", "1234")
+            // `-_8` is the unpadded base64url encoding of [0xfb, 0xff].
+            .set_body_raw(
+                r#"{"nonce":"-_8","expiry":"2024-01-01T00:00:00Z","accept":[],"status":"waiting"}"#,
+                "application/vnd.veraison.challenge-response-session+json",
+            );
+
+        Mock::given(method("POST"))
+            .and(path("/newSession"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let cr = ChallengeResponseBuilder::new()
+            .with_new_session_url(mock_server.uri() + "/newSession")
+            .build()
+            .unwrap();
+
+        let (_, session) = cr
+            .new_session(&Nonce::Size(2))
+            .await
+            .expect("unexpected failure");
+
+        assert_eq!(session.nonce(), [0xfb, 0xff]);
     }
 
     #[async_std::test]
