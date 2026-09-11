@@ -113,6 +113,11 @@ impl ConfigureHttp for QueryRunnerBuilder {
         self
     }
 
+    fn no_check_certificate(mut self) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.no_check_certificate();
+        self
+    }
+
     #[cfg(feature = "disk-caching")]
     fn with_disk_cache(mut self, v: CACacheManager) -> QueryRunnerBuilder {
         self.http_client_builder = self.http_client_builder.with_disk_cache(v);

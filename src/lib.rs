@@ -125,6 +125,11 @@ impl ConfigureHttp for ChallengeResponseBuilder {
         self
     }
 
+    fn no_check_certificate(mut self) -> ChallengeResponseBuilder {
+        self.http_client_builder = self.http_client_builder.no_check_certificate();
+        self
+    }
+
     #[cfg(feature = "disk-caching")]
     fn with_disk_cache(mut self, v: CACacheManager) -> ChallengeResponseBuilder {
         self.http_client_builder = self.http_client_builder.with_disk_cache(v);
@@ -478,6 +483,11 @@ impl DiscoveryBuilder {
 impl ConfigureHttp for DiscoveryBuilder {
     fn with_root_certificate(mut self, v: PathBuf) -> DiscoveryBuilder {
         self.http_client_builder = self.http_client_builder.with_root_certificate(v);
+        self
+    }
+
+    fn no_check_certificate(mut self) -> DiscoveryBuilder {
+        self.http_client_builder = self.http_client_builder.no_check_certificate();
         self
     }
 

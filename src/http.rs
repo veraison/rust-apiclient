@@ -29,6 +29,9 @@ pub trait ConfigureHttp: Sized {
     /// the system's trust anchor store.
     fn with_root_certificate(self, v: PathBuf) -> Self;
 
+    /// Use this method to bypass certificate validation.
+    fn no_check_certificate(self) -> Self;
+
     /// Use this method to build a client with client-side caching enabled using local disk storage.
     /// Pass in the path to the folder on the local system that should be used for the cache.
     /// Default caching mode and options will also be applied.
@@ -88,6 +91,7 @@ pub trait ConfigureHttp: Sized {
 /// middleware layers for client-side caching.
 pub(crate) struct HttpClientBuilder {
     root_certificate: Option<PathBuf>,
+    no_check_certificate: bool,
     #[cfg(feature = "disk-caching")]
     disk_cache: Option<CACacheManager>,
     #[cfg(feature = "memory-caching")]
@@ -99,6 +103,11 @@ pub(crate) struct HttpClientBuilder {
 impl ConfigureHttp for HttpClientBuilder {
     fn with_root_certificate(mut self, v: PathBuf) -> HttpClientBuilder {
         self.root_certificate = Some(v);
+        self
+    }
+
+    fn no_check_certificate(mut self) -> HttpClientBuilder {
+        self.no_check_certificate = true;
         self
     }
 
@@ -130,6 +139,7 @@ impl HttpClientBuilder {
     pub fn new() -> Self {
         Self {
             root_certificate: None,
+            no_check_certificate: false,
             #[cfg(feature = "disk-caching")]
             disk_cache: None,
             #[cfg(feature = "memory-caching")]
@@ -143,18 +153,13 @@ impl HttpClientBuilder {
     pub fn build(self) -> Result<ClientWithMiddleware, Error> {
         let mut http_client_builder: ClientBuilder = reqwest::ClientBuilder::new();
 
-        if let Some(root_cert) = self.root_certificate {
+        if self.no_check_certificate {
+            http_client_builder = http_client_builder.tls_danger_accept_invalid_certs(true);
+        } else if let Some(root_cert) = self.root_certificate {
             let mut buf = Vec::new();
             File::open(root_cert)?.read_to_end(&mut buf)?;
             let cert = Certificate::from_pem(&buf)?;
-            http_client_builder = http_client_builder
-                .add_root_certificate(cert)
-                // We can skip cert validation for custom root certs.
-                // Custom roots are designed as a convenience for non-production environments
-                // They allow TLS to be tested but without the creation of CA infrastructure (e.g. using self-signed)
-                // Validating such certs would defeat the purpose.
-                // There are no security implications here, beyond those of using a custom root cert in the first place.
-                .tls_danger_accept_invalid_certs(true);
+            http_client_builder = http_client_builder.add_root_certificate(cert)
         }
 
         let http_client = http_client_builder.use_rustls_tls().build()?;
