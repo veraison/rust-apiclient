@@ -20,8 +20,10 @@ use reqwest_middleware::ClientWithMiddleware;
 
 use crate::http::{ConfigureHttp, HttpClientBuilder};
 
+pub mod auth;
 pub mod coserv;
 pub mod http;
+pub mod management;
 
 #[derive(thiserror::Error, PartialEq, Eq)]
 pub enum Error {
@@ -470,12 +472,16 @@ impl DiscoveryBuilder {
         let coserv_url = base_url
             .join("/.well-known/coserv-configuration")
             .expect("failed to join path fragment with base URL");
+        let management_url = base_url
+            .join("/.well-known/veraison/management")
+            .expect("failed to join path fragement with base URL");
 
         let http_client = self.http_client_builder.build()?;
         Ok(Discovery {
             http_client,
             verification_url,
             coserv_url,
+            management_url,
         })
     }
 }
@@ -593,6 +599,55 @@ impl VerificationApi {
     }
 }
 
+/// This object models the state and capabilities of the management API in the Veraison service.
+///
+/// An instance of this struct is returned from [`Discovery::get_management_api()`].
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub struct ManagementApi {
+    attestation_schemes: Vec<String>,
+    version: String,
+    service_state: ServiceState,
+    api_endpoints: std::collections::HashMap<String, String>,
+}
+
+impl ManagementApi {
+    /// Obtains the strings for the set of attestation schemes that are supported for policy
+    /// submission. Each member of the array will be a attestation scheme string such as
+    /// `"ARM_CCA"`.
+    pub fn attestation_schemes(&self) -> &[String] {
+        self.attestation_schemes.as_ref()
+    }
+
+    /// Obtains the version of the service.
+    pub fn version(&self) -> &str {
+        self.version.as_ref()
+    }
+
+    /// Indicates whether the service is starting, ready, terminating or down.
+    pub fn service_state(&self) -> &ServiceState {
+        &self.service_state
+    }
+
+    /// Gets the API endpoint associated with a specific endpoint name.
+    ///
+    /// Returns `None` if there is no API endpoint with the given name, otherwise returns
+    /// a relative URL such as `"/management/v1/policy/:scheme"`.
+    pub fn get_api_endpoint(&self, endpoint_name: &str) -> Option<&String> {
+        self.api_endpoints.get(endpoint_name)
+    }
+
+    /// Gets all of the API endpoints published by this management service as a vector of
+    /// string pairs.
+    ///
+    /// For each endpoint entry, the first member of the pair is the endpoint name, such
+    /// as `"activatePolicy"`, and the second member is the corresponding
+    /// relative URL, such as `"/management/v1/policy/:scheme"`.
+    pub fn get_all_api_endpoints(&self) -> Vec<(&String, &String)> {
+        self.api_endpoints.iter().collect()
+    }
+}
+
 /// This structure allows Veraison endpoints and service capabilities to be discovered
 /// dynamically.
 ///
@@ -602,6 +657,7 @@ pub struct Discovery {
     verification_url: url::Url,
     coserv_url: url::Url,
     http_client: ClientWithMiddleware,
+    management_url: url::Url,
 }
 
 impl Discovery {
@@ -665,6 +721,30 @@ impl Discovery {
                 "Failed to discover CoSERV endpoint information (CBOR format).",
             ))),
         }
+    }
+
+    /// Obtains the capabilities and endpoints of the Veraison verification service.
+    pub async fn get_management_api(&self) -> Result<ManagementApi, Error> {
+        let response = self
+            .http_client
+            .get(self.management_url.as_str())
+            .header(reqwest::header::ACCEPT, DISCOVERY_MEDIA_TYPE)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status != reqwest::StatusCode::OK {
+            let body = response.text().await.unwrap_or_default();
+            let detail = if body.is_empty() {
+                String::new()
+            } else {
+                format!(": {body}")
+            };
+            return Err(Error::ApiError(format!(
+                "Failed to discover management endpoint information: HTTP {status}{detail}"
+            )));
+        }
+        Ok(response.json::<ManagementApi>().await?)
     }
 }
 
@@ -858,24 +938,28 @@ mod tests {
                 "https://a.b.c",
                 "https://a.b.c/.well-known/veraison/verification",
                 "https://a.b.c/.well-known/coserv-configuration",
+                "https://a.b.c/.well-known/veraison/management",
             ),
             (
                 "http://a",
                 "http://a/.well-known/veraison/verification",
                 "http://a/.well-known/coserv-configuration",
+                "http://a/.well-known/veraison/management",
             ),
             (
                 "https://a.b:42/",
                 "https://a.b:42/.well-known/veraison/verification",
                 "https://a.b:42/.well-known/coserv-configuration",
+                "https://a.b:42/.well-known/veraison/management",
             ),
         ];
-        for &(b, v, c) in base_urls.iter() {
+        for &(b, v, c, m) in base_urls.iter() {
             let res = DiscoveryBuilder::new().with_base_url(b.to_owned()).build();
             assert!(res.is_ok(), "failed to create discovery with base {b}",);
             let disc = res.unwrap();
             assert_eq!(disc.coserv_url, url::Url::parse(c).unwrap());
             assert_eq!(disc.verification_url, url::Url::parse(v).unwrap());
+            assert_eq!(disc.management_url, url::Url::parse(m).unwrap());
         }
 
         let not_base_urls = ["https://a/b/c", "https://a.b/c"];
@@ -962,6 +1046,70 @@ mod tests {
                 .api_endpoints
                 .get("newChallengeResponseSession"),
             Some(&String::from("/challenge-response/v1/newSession"))
+        );
+    }
+
+    #[async_std::test]
+    async fn discover_management_ok() {
+        let mock_server = MockServer::start().await;
+
+        // Sample response.
+        let raw_response = r#"
+        {
+            "attestation-schemes": [
+                "ARM_CCA",
+                "PARSEC_CCA",
+                "PARSEC_TPM",
+                "PSA_IOT",
+                "RIOT",
+                "SEVSNP",
+                "TPM_ENACTTRUST"
+            ],
+            "version": "0.0.2608+6fbd4b8",
+            "service-state": "READY",
+            "api-endpoints": {
+                "activatePolicy": "/management/v1/policy/:scheme/:uuid/activate",
+                "createPolicy": "/management/v1/policy/:scheme",
+                "deactivatePolicies": "/management/v1/policies/:scheme/deactivate",
+                "getActivePolicy": "/management/v1/policy/:scheme",
+                "getPolicies": "/management/v1/policies/:scheme",
+                "getPolicy": "/management/v1/policy/:scheme/:uuid"
+            }
+        }"#;
+
+        let response = ResponseTemplate::new(200)
+            .set_body_raw(raw_response, "application/vnd.veraison.discovery+json");
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/veraison/management"))
+            .respond_with(response)
+            .mount(&mock_server)
+            .await;
+
+        let discovery = DiscoveryBuilder::new()
+            .with_base_url(mock_server.uri())
+            .build()
+            .expect("Failed to create Discovery client.");
+
+        let management_api = discovery
+            .get_management_api()
+            .await
+            .expect("Failed to get management endpoint details.");
+
+        // Check that we've pulled and deserialized everything that we expect
+        assert_eq!(management_api.service_state, ServiceState::Ready);
+        assert_eq!(management_api.version, String::from("0.0.2608+6fbd4b8"));
+        assert_eq!(management_api.attestation_schemes.len(), 7);
+        assert_eq!(
+            management_api.attestation_schemes[0],
+            String::from("ARM_CCA")
+        );
+        assert_eq!(management_api.api_endpoints.len(), 6);
+        assert_eq!(
+            management_api.api_endpoints.get("activatePolicy"),
+            Some(&String::from(
+                "/management/v1/policy/:scheme/:uuid/activate"
+            ))
         );
     }
 

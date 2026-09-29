@@ -18,9 +18,53 @@ use http_cache_reqwest::{MokaCache, MokaManager};
 
 use reqwest::{Certificate, ClientBuilder};
 
-use reqwest_middleware::ClientWithMiddleware;
+use http::Extensions;
+use reqwest_middleware::Result as MiddlewareResult;
+use reqwest_middleware::{ClientWithMiddleware, Middleware, Next};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::Error;
+use crate::{
+    auth::{Authenticator, NullAuthenticator},
+    Error,
+};
+
+struct AuthenticationMiddleware {
+    authenticator: Arc<Mutex<Box<dyn Authenticator + Send>>>,
+}
+
+#[async_trait::async_trait]
+impl Middleware for AuthenticationMiddleware {
+    async fn handle(
+        &self,
+        mut request: reqwest::Request,
+        extensions: &mut Extensions,
+        next: Next<'_>,
+    ) -> MiddlewareResult<reqwest::Response> {
+        let header = self
+            .authenticator
+            .lock()
+            .await
+            .encode_header()
+            .await
+            .map_err(reqwest_middleware::Error::middleware)?;
+
+        if !header.is_empty() {
+            request.headers_mut().insert(
+                reqwest::header::AUTHORIZATION,
+                header
+                    .parse::<reqwest::header::HeaderValue>()
+                    .map_err(|error| {
+                        reqwest_middleware::Error::middleware(std::io::Error::other(
+                            error.to_string(),
+                        ))
+                    })?,
+            );
+        }
+
+        next.run(request, extensions).await
+    }
+}
 
 /// This trait is shared and implemented by all "Builder" objects that include an HTTP client.
 pub trait ConfigureHttp: Sized {
@@ -88,8 +132,9 @@ pub trait ConfigureHttp: Sized {
 
 /// A common builder for all HTTP client objects used in this crate.
 /// The common builder allows for the configuration of custom TLS root certificates along with
-/// middleware layers for client-side caching.
+/// middleware layers for client-side caching and authentication.
 pub(crate) struct HttpClientBuilder {
+    authenticator: Box<dyn Authenticator + Send>,
     root_certificate: Option<PathBuf>,
     no_check_certificate: bool,
     #[cfg(feature = "disk-caching")]
@@ -138,6 +183,7 @@ impl HttpClientBuilder {
     /// default constructor
     pub fn new() -> Self {
         Self {
+            authenticator: Box::new(NullAuthenticator),
             root_certificate: None,
             no_check_certificate: false,
             #[cfg(feature = "disk-caching")]
@@ -147,6 +193,14 @@ impl HttpClientBuilder {
             cache_mode: None,
             http_cache_options: None,
         }
+    }
+
+    pub fn with_authenticator<A>(mut self, authenticator: A) -> Self
+    where
+        A: Authenticator + Send + 'static,
+    {
+        self.authenticator = Box::new(authenticator);
+        self
     }
 
     /// Instantiate the client with the desired configuration.
@@ -165,8 +219,14 @@ impl HttpClientBuilder {
         let http_client = http_client_builder.use_rustls_tls().build()?;
 
         // Now add any required middleware to the client
+        // Authentication runs before caching so authenticated requests are cached consistently.
+        let authentication = AuthenticationMiddleware {
+            authenticator: Arc::new(Mutex::new(self.authenticator)),
+        };
+
         #[allow(unused_mut)]
-        let mut middleware_builder = reqwest_middleware::ClientBuilder::new(http_client);
+        let mut middleware_builder =
+            reqwest_middleware::ClientBuilder::new(http_client).with(authentication);
 
         // Add memory caching middleware if configured
         #[cfg(feature = "memory-caching")]
