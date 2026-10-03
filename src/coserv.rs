@@ -311,7 +311,7 @@ mod tests {
         );
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn execute_query_unsigned_okay() {
         let query_bytes = include_bytes!("../test/coserv/example_query.cbor");
         let query = Coserv::from_cbor(query_bytes.as_slice()).unwrap();
@@ -364,7 +364,7 @@ mod tests {
         }
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn execute_query_signed_extracted_okay() {
         // Dummy COSE verifier
         struct TestVerifier {}
@@ -433,7 +433,7 @@ mod tests {
         );
     }
 
-    #[async_std::test]
+    #[tokio::test]
     #[cfg(feature = "disk-caching")]
     async fn execute_query_disk_cached_okay() {
         // Make a temporary directory to use as the cache (will be deleted when dropped)
@@ -501,7 +501,7 @@ mod tests {
         );
     }
 
-    #[async_std::test]
+    #[tokio::test]
     #[cfg(feature = "memory-caching")]
     async fn execute_query_memory_cached_okay() {
         use http_cache_reqwest::MokaCache;
@@ -564,7 +564,7 @@ mod tests {
         );
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn execute_query_not_acceptable() {
         let query_bytes = include_bytes!("../test/coserv/example_query.cbor");
         let query = Coserv::from_cbor(query_bytes.as_slice()).unwrap();

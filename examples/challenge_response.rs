@@ -26,8 +26,12 @@ fn my_evidence_builder(
     ))
 }
 
-#[async_std::main]
+#[tokio::main]
 async fn main() {
+    run().await
+}
+
+async fn run() {
     let base_url = "https://localhost:8080";
 
     let discovery = DiscoveryBuilder::new()

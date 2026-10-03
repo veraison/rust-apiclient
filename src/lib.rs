@@ -744,7 +744,7 @@ mod tests {
         assert!(b.build().is_err());
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn new_session_request_ok() {
         let mock_server = MockServer::start().await;
         let nonce_value = vec![0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef];
@@ -778,7 +778,7 @@ mod tests {
         assert_eq!(rv.0, format!("{}/1234", mock_server.uri()));
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn new_session_decodes_unpadded_base64url_nonce() {
         let mock_server = MockServer::start().await;
         let response = ResponseTemplate::new(201)
@@ -808,7 +808,7 @@ mod tests {
         assert_eq!(session.nonce(), [0xfb, 0xff]);
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn challenge_response_ok() {
         let mock_server = MockServer::start().await;
         let nonce_value = vec![0xbe, 0xef];
@@ -885,7 +885,7 @@ mod tests {
         }
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn discover_verification_ok() {
         let mock_server = MockServer::start().await;
 
@@ -965,7 +965,7 @@ mod tests {
         );
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn discover_coserv_json_ok() {
         let mock_server = MockServer::start().await;
 
@@ -1022,7 +1022,7 @@ mod tests {
         assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn discover_coserv_cbor_ok() {
         let mock_server = MockServer::start().await;
 
@@ -1052,7 +1052,7 @@ mod tests {
         assert_eq!(coserv_dd.version.to_string(), String::from("1.2.3-beta"));
     }
 
-    #[async_std::test]
+    #[tokio::test]
     #[cfg(feature = "disk-caching")]
     async fn discover_coserv_cbor_disk_cached_ok() {
         // Make a temporary directory to use as the cache (will be deleted when dropped)
@@ -1120,7 +1120,7 @@ mod tests {
         );
     }
 
-    #[async_std::test]
+    #[tokio::test]
     #[cfg(feature = "memory-caching")]
     async fn discover_coserv_cbor_memory_cached_ok() {
         use http_cache_reqwest::MokaCache;
