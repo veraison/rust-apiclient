@@ -38,3 +38,7 @@ features = ["base64", "chrono"]
 [dev-dependencies]
 wiremock = "=0.6.2"
 tempfile = "3.26.0"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
