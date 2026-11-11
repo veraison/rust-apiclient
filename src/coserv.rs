@@ -3,7 +3,7 @@
 
 #![allow(clippy::multiple_crate_versions)]
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use ciborium::Value as CborValue;
 use http_cache_reqwest::{CacheMode, HttpCacheOptions};
@@ -137,6 +137,11 @@ impl ConfigureHttp for QueryRunnerBuilder {
 
     fn with_http_cache_options(mut self, v: HttpCacheOptions) -> QueryRunnerBuilder {
         self.http_client_builder = self.http_client_builder.with_http_cache_options(v);
+        self
+    }
+
+    fn with_timeout(mut self, v: Duration) -> QueryRunnerBuilder {
+        self.http_client_builder = self.http_client_builder.with_timeout(v);
         self
     }
 }
